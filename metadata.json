@@ -1,0 +1,6 @@
+{
+  "name": "NetPulse",
+  "description": "Adaptive Android Network Intelligence & Connectivity Optimizer for diagnosing zombie connections, measuring usability, and automated safe recovery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
