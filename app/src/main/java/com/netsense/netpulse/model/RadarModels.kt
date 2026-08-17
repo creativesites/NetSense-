@@ -15,13 +15,16 @@ data class WifiRadarSnapshot(
     val band: WifiBand = WifiBand.UNKNOWN,
     val channelNumber: Int = 0,
     val channelWidthMhz: Int = 20, // 20, 40, 80, 160
-    val rssiDbm: Int = -100, // e.g. -55 dBm
+    val rssiDbm: Int = -100, // e.g. -55 dBm. DISPLAY VALUE ONLY - may be a conservative
+    // placeholder rather than a real reading; check [isRssiMeasured] before treating this
+    // as a genuine measurement (e.g. before feeding it into ML training telemetry).
+    val isRssiMeasured: Boolean = false,
     val linkSpeedMbps: Int = 0,
     val txLinkSpeedMbps: Int = 0,
     val rxLinkSpeedMbps: Int = 0,
     val wifiStandard: String = "Wi-Fi 5 / 6", // e.g. Wi-Fi 6 (802.11ax)
-    val gatewayIp: String? = null,
-    val subnetMask: String? = null,
+    val gatewayIp: String? = null, // real DHCP gateway when available; null if unmeasured (never fabricated)
+    val subnetMask: String? = null, // real DHCP netmask when available; null if unmeasured (never fabricated)
     val signalStrengthPercent: Int = 0,
     val congestionLevel: String = "Low", // Low, Moderate, High
     val interferenceRisk: String = "Minimal"
@@ -31,6 +34,10 @@ data class CellularRfSnapshot(
     val isCellularConnected: Boolean = false,
     val carrierName: String? = null,
     val dataNetworkType: String = "Unknown",
+    // All fields below are null when the OS did not actually provide a registered-cell
+    // reading this cycle (e.g. no location permission, no registered CellInfoLte/Nr).
+    // They must NEVER be filled with plausible-looking placeholder numbers - see
+    // [isRfDataMeasured]. A null here means "unmeasured", not "zero" or "average".
     val rsrpDbm: Int? = null, // Reference Signal Received Power (-140..-44 dBm)
     val rsrqDb: Int? = null,  // Reference Signal Received Quality (-20..-3 dB)
     val sinrDb: Int? = null,  // Signal-to-Interference-plus-Noise Ratio (-10..30 dB)
@@ -39,6 +46,7 @@ data class CellularRfSnapshot(
     val pci: Int? = null,     // Physical Cell ID
     val tac: Int? = null,     // Tracking Area Code
     val bandIndicator: String? = null, // e.g. "LTE Band 7 (2600 MHz)" / "5G n78"
+    val isRfDataMeasured: Boolean = false, // true only when the fields above came from a real CellInfoLte/Nr reading
     val isRoaming: Boolean = false,
     val isCarrierAggregationActive: Boolean = false,
     val simState: String = "Ready"

@@ -1,7 +1,10 @@
 package com.netsense.netpulse.ai.predictor
 
 object PulsePredictorConfig {
-    const val FEATURE_NORMALIZATION_VERSION = 1
+    // v2: fixed a missing-value ambiguity where a null measurement normalized to the same
+    // encoded value as a genuine best-case (e.g. 0ms) reading. See
+    // PulseFeatureSchema.MISSING_VALUE_SENTINEL for the fix and full feature documentation.
+    const val FEATURE_NORMALIZATION_VERSION = 2
     const val WINDOW_SIZE = 15
     const val FEATURE_COUNT = 12
     const val MODEL_ASSET_PATH = "models/pulse_predictor_v1.tflite"
@@ -50,13 +53,14 @@ object PulsePredictorConfig {
     // Feature 11: Consecutive Failures (0 .. 5)
     const val MAX_CONSECUTIVE_FAILURES = 5.0f
 
-    // Feature 12: Transport Type Encoded
+    // Feature 12: Transport Type Encoded. -1.0 here means "transport is NONE" (a real,
+    // always-computable category) - NOT "missing". This is a different column than the
+    // measurement features above, so it does not collide with MISSING_VALUE_SENTINEL; see
+    // PulseFeatureSchema for the full per-column documentation.
     const val TRANSPORT_CELLULAR = 0.0f
     const val TRANSPORT_WIFI = 1.0f
     const val TRANSPORT_OTHER = 0.5f
     const val TRANSPORT_NONE = -1.0f
 
-    // Missing value indicators
-    const val VALUE_UNAVAILABLE = 0.0f
     const val TEMPORAL_GAP_THRESHOLD_MS = 10_000L // 10 seconds
 }

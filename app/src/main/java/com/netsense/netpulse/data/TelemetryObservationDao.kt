@@ -29,4 +29,54 @@ interface TelemetryObservationDao {
 
     @Query("DELETE FROM ml_telemetry_observations")
     suspend fun clearAll()
+
+    // --- Session / label-resolution support -------------------------------------------
+
+    /** All rows for one session, chronological. Required input shape for LabelResolver. */
+    @Query("SELECT * FROM ml_telemetry_observations WHERE sessionId = :sessionId ORDER BY timestamp ASC")
+    suspend fun getObservationsForSession(sessionId: String): List<TelemetryObservationEntity>
+
+    /** Sessions that still have at least one label awaiting resolution - keeps periodic label resolution cheap. */
+    @Query(
+        "SELECT DISTINCT sessionId FROM ml_telemetry_observations " +
+            "WHERE labelDegradation15sStatus = 'UNRESOLVED' OR labelDropout30sStatus = 'UNRESOLVED'"
+    )
+    suspend fun getSessionIdsWithUnresolvedLabels(): List<String>
+
+    @Query(
+        """
+        UPDATE ml_telemetry_observations SET
+            labelDegradation15s = :degradation,
+            labelDegradation15sStatus = :degradationStatus,
+            labelDropout30s = :dropout,
+            labelDropout30sStatus = :dropoutStatus,
+            labelLikelyCause = :cause,
+            labelLikelyCauseStatus = :causeStatus,
+            labelSchemaVersion = :schemaVersion
+        WHERE id = :id
+        """
+    )
+    suspend fun updateResolvedLabels(
+        id: Long,
+        degradation: Boolean?,
+        degradationStatus: String,
+        dropout: Boolean?,
+        dropoutStatus: String,
+        cause: String?,
+        causeStatus: String,
+        schemaVersion: Int
+    )
+
+    // --- Production (non-synthetic) dataset access -------------------------------------
+    // Synthetic (FaultSimulator) rows must never silently enter training data/exports -
+    // these queries are the default access path and always exclude isSynthetic = 1.
+
+    @Query("SELECT * FROM ml_telemetry_observations WHERE isSynthetic = 0 ORDER BY timestamp ASC")
+    suspend fun getProductionObservations(): List<TelemetryObservationEntity>
+
+    @Query("SELECT * FROM ml_telemetry_observations WHERE isSynthetic = 0 ORDER BY timestamp DESC")
+    fun getProductionObservationsFlow(): Flow<List<TelemetryObservationEntity>>
+
+    @Query("SELECT DISTINCT sessionId FROM ml_telemetry_observations WHERE isSynthetic = 0")
+    suspend fun getProductionSessionIds(): List<String>
 }

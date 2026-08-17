@@ -28,6 +28,12 @@ import com.netsense.netpulse.data.DiagnosticRepository
 import com.netsense.netpulse.data.NetPulseDatabase
 import com.netsense.netpulse.data.NetPulsePreferences
 import com.netsense.netpulse.data.TelemetryObservationEntity
+import com.netsense.netpulse.dataset.DatasetExportFormat
+import com.netsense.netpulse.dataset.DatasetExportService
+import com.netsense.netpulse.dataset.LabelResolutionService
+import com.netsense.netpulse.dataset.NetworkSessionManager
+import com.netsense.netpulse.dataset.ObservationQualityClassifier
+import com.netsense.netpulse.dataset.RecoveryOutcomeTracker
 import com.netsense.netpulse.engine.DiagnosticEngine
 import com.netsense.netpulse.engine.DualStackEngine
 import com.netsense.netpulse.engine.FaultSimulator
@@ -63,6 +69,7 @@ import com.netsense.netpulse.telephony.TelephonyObserver
 import com.netsense.netpulse.telephony.TelephonySnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -144,6 +151,7 @@ enum class DashboardTab(val label: String) {
 
 sealed class UiEvent {
     data class ShareCsv(val file: File) : UiEvent()
+    data class ShareFile(val file: File, val mimeType: String) : UiEvent()
     data class ShareText(val text: String, val title: String) : UiEvent()
     data class ShowToast(val message: String) : UiEvent()
 }
@@ -169,6 +177,9 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
     private val database = NetPulseDatabase.getDatabase(application)
     private val repository = DiagnosticRepository(database.diagnosticLogDao(), database.telemetryObservationDao())
     private val preferences = NetPulsePreferences(application)
+    private val sessionManager = NetworkSessionManager()
+    private val labelResolutionService = LabelResolutionService(database.telemetryObservationDao())
+    private val recoveryOutcomeTracker = RecoveryOutcomeTracker(database.recoveryOutcomeDao())
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -254,13 +265,21 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                     _uiState.value.dualStackResult
                 )
 
+                // Recovery outcomes must be judged against real (never simulated) network
+                // state, so this always uses the un-simulated enrichedSnapshot/score.
+                val realScoreForRecovery = if (scenario != SimulatedFaultScenario.NONE) {
+                    UsabilityEngine.calculateScore(enrichedSnapshot, _uiState.value.probeResult)
+                } else score
+                recoveryOutcomeTracker.resolvePending(enrichedSnapshot, realScoreForRecovery)
+
                 val (prediction, explanation, telemetryCount) = processTelemetryAndInference(
                     snapshot = effectiveSnapshot,
                     telSnapshot = telSnapshot,
                     score = score,
                     probe = currentProbe,
                     wifiRadar = wifiRadar,
-                    cellularRf = cellularRf
+                    cellularRf = cellularRf,
+                    isSynthetic = scenario != SimulatedFaultScenario.NONE
                 )
 
                 _uiState.update { current ->
@@ -279,6 +298,16 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                         lastCheckedTimestamp = System.currentTimeMillis()
                     )
                 }
+            }
+        }
+
+        // Periodic future-outcome label resolution (Part 9/16). Deliberately infrequent and
+        // cheap - only sessions with an UNRESOLVED label are rescanned (Part 20: high-value
+        // data over maximum churn, no need to do this on every telemetry tick).
+        viewModelScope.launch {
+            while (true) {
+                delay(60_000L)
+                labelResolutionService.resolvePendingLabels()
             }
         }
 
@@ -417,7 +446,8 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                 score = score,
                 probe = probe,
                 wifiRadar = _uiState.value.wifiRadar,
-                cellularRf = _uiState.value.cellularRf
+                cellularRf = _uiState.value.cellularRf,
+                isSynthetic = _uiState.value.activeSimulationScenario != SimulatedFaultScenario.NONE
             )
 
             _uiState.update { current ->
@@ -536,6 +566,18 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun executeHealerAction(action: HealerActionItem, context: Context) {
+        // Record the attempt with its pre-recovery state immediately. The eventual
+        // SUCCEEDED/FAILED verdict is decided later, from real PulseCore validation, by
+        // RecoveryOutcomeTracker.resolvePending - never from this action merely completing.
+        viewModelScope.launch {
+            recoveryOutcomeTracker.recordAttempt(
+                sessionId = sessionManager.currentSessionId,
+                recoveryType = action.actionType.name,
+                snapshot = _uiState.value.snapshot,
+                score = _uiState.value.scoreResult
+            )
+        }
+
         when (action.actionType) {
             HealerActionType.AIRPLANE_CYCLE -> {
                 try {
@@ -681,25 +723,70 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Exports the PRODUCTION (non-synthetic) ML telemetry dataset for offline
+     * PulsePredictor experimentation (Part 13). Runs a final label-resolution pass first so
+     * the export reflects the freshest labels currently resolvable.
+     */
+    fun exportMlDataset(context: Context, format: DatasetExportFormat) {
+        viewModelScope.launch(Dispatchers.IO) {
+            labelResolutionService.resolvePendingLabels()
+            val rows = database.telemetryObservationDao().getProductionObservations()
+            if (rows.isEmpty()) {
+                _uiEvents.emit(UiEvent.ShowToast("No production telemetry recorded to export yet."))
+                return@launch
+            }
+            try {
+                val file = DatasetExportService.export(context, rows, format)
+                _uiEvents.emit(UiEvent.ShareFile(file, format.mimeType))
+            } catch (e: Exception) {
+                _uiEvents.emit(UiEvent.ShowToast("Dataset export failed: ${e.localizedMessage}"))
+            }
+        }
+    }
+
     private suspend fun processTelemetryAndInference(
         snapshot: NetworkSnapshot,
         telSnapshot: TelephonySnapshot,
         score: UsabilityScoreResult,
         probe: DiagnosticProbeResult?,
         wifiRadar: WifiRadarSnapshot,
-        cellularRf: CellularRfSnapshot
+        cellularRf: CellularRfSnapshot,
+        isSynthetic: Boolean
     ): Triple<PulsePrediction, PulseMindExplanation, Int> {
+        val timestamp = System.currentTimeMillis()
+
+        // A synthetic (FaultSimulator) tick must not roll the real session forward or mix
+        // into it - only advance the real session manager for genuine device telemetry.
+        val sessionId = if (isSynthetic) {
+            sessionManager.currentSessionId
+        } else {
+            sessionManager.resolveSessionId(snapshot, telSnapshot, wifiBssid = wifiRadar.bssid, timestamp = timestamp)
+        }
+
+        val isCellular = snapshot.primaryTransport == com.netsense.netpulse.model.NetworkTransport.CELLULAR
+        val isWifi = snapshot.primaryTransport == com.netsense.netpulse.model.NetworkTransport.WIFI
+        // Only trust RF/Wi-Fi signal fields when RadarEngine actually measured them this
+        // cycle - never let RadarEngine's display-only fallback numbers leak into training
+        // data as if they were real readings.
+        val isRfSignalMeasured = when {
+            isCellular -> cellularRf.isRfDataMeasured
+            isWifi -> wifiRadar.isRssiMeasured
+            else -> false
+        }
+
         val obs = RawTelemetryObservation(
-            timestamp = System.currentTimeMillis(),
+            timestamp = timestamp,
+            sessionId = sessionId,
             transport = snapshot.primaryTransport,
             dnsLatencyMs = probe?.averageDnsMs,
             tcpRttMs = probe?.averageTcpMs,
             tcpJitterMs = probe?.tcpJitterMs,
             httpTtfbMs = probe?.averageHttpMs,
             packetLossPct = probe?.packetLossPct ?: 0f,
-            rsrpDbm = cellularRf.rsrpDbm ?: telSnapshot.signalDbm,
-            sinrDb = cellularRf.sinrDb,
-            wifiRssiDbm = if (snapshot.primaryTransport == com.netsense.netpulse.model.NetworkTransport.WIFI) wifiRadar.rssiDbm else null,
+            rsrpDbm = if (isCellular && cellularRf.isRfDataMeasured) cellularRf.rsrpDbm ?: telSnapshot.signalDbm else null,
+            sinrDb = if (isCellular && cellularRf.isRfDataMeasured) cellularRf.sinrDb else null,
+            wifiRssiDbm = if (isWifi && wifiRadar.isRssiMeasured) wifiRadar.rssiDbm else null,
             consecutiveProbeFailures = if (probe?.overallHttpSuccess == false) 1 else 0,
             usabilityScore = score.score,
             isValidated = snapshot.isValidated,
@@ -708,13 +795,23 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
 
         telemetryWindow.addObservation(obs)
 
+        val observationQuality = ObservationQualityClassifier.classify(
+            snapshot = snapshot,
+            probe = probe,
+            isRfSignalMeasured = isRfSignalMeasured,
+            isSynthetic = isSynthetic
+        )
+
         // Asynchronously record to Room for ML training dataset
         val entity = TelemetryObservationEntity(
             timestamp = obs.timestamp,
+            sessionId = sessionId,
             transport = obs.transport.name,
             networkId = snapshot.interfaceName ?: telSnapshot.carrierName,
             rsrpDbm = obs.rsrpDbm,
+            rsrqDb = if (isCellular && cellularRf.isRfDataMeasured) cellularRf.rsrqDb else null,
             sinrDb = obs.sinrDb,
+            cqi = if (isCellular && cellularRf.isRfDataMeasured) cellularRf.cqi else null,
             wifiRssiDbm = obs.wifiRssiDbm,
             dnsLatencyMs = obs.dnsLatencyMs,
             dnsSuccess = probe?.overallDnsSuccess ?: false,
@@ -723,12 +820,16 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
             tcpJitterMs = obs.tcpJitterMs,
             httpTtfbMs = obs.httpTtfbMs,
             httpSuccess = probe?.overallHttpSuccess ?: false,
+            isCaptivePortal = snapshot.isCaptivePortal,
+            httpStatusCode = probe?.primaryEndpoint?.httpStatusCode,
             packetLossPct = obs.packetLossPct,
             consecutiveProbeFailures = obs.consecutiveProbeFailures,
             usabilityScore = obs.usabilityScore,
             isValidated = obs.isValidated,
             isZombie = obs.isZombie,
-            primaryDiagnosis = score.primaryDiagnosis
+            primaryDiagnosis = score.primaryDiagnosis,
+            observationQuality = observationQuality.name,
+            isSynthetic = isSynthetic
         )
         repository.recordTelemetry(entity)
 

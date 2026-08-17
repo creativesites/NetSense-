@@ -4,6 +4,7 @@ import com.netsense.netpulse.model.NetworkTransport
 
 data class RawTelemetryObservation(
     val timestamp: Long = System.currentTimeMillis(),
+    val sessionId: String = "",
     val transport: NetworkTransport = NetworkTransport.NONE,
     val dnsLatencyMs: Long? = null,
     val tcpRttMs: Long? = null,
@@ -19,11 +20,22 @@ data class RawTelemetryObservation(
     val isZombie: Boolean = false
 )
 
+/**
+ * In-memory sliding window feeding PulsePredictor inference. This is a *finer-grained*,
+ * ML-input-specific notion of contiguity than [com.netsense.netpulse.dataset.NetworkSessionManager]'s
+ * persisted `sessionId` (2 minute gap threshold): a window must stay valid as a contiguous
+ * `[1, WINDOW_SIZE, FEATURE_COUNT]` CNN input, so it also resets on a much shorter
+ * [PulsePredictorConfig.TEMPORAL_GAP_THRESHOLD_MS] gap and on a bare transport change.
+ * It additionally resets whenever the observation's `sessionId` differs from the session
+ * the window was built from, so it can never straddle a session boundary even in cases the
+ * coarser checks below wouldn't catch on their own (e.g. Wi-Fi BSSID change).
+ */
 class TelemetryWindow(private val windowSize: Int = PulsePredictorConfig.WINDOW_SIZE) {
 
     private val lock = Any()
     private val observations = ArrayDeque<RawTelemetryObservation>(windowSize + 2)
     private var currentTransport: NetworkTransport = NetworkTransport.NONE
+    private var currentSessionId: String = ""
     private var lastObservationTimestamp: Long = 0L
 
     val size: Int
@@ -34,13 +46,19 @@ class TelemetryWindow(private val windowSize: Int = PulsePredictorConfig.WINDOW_
 
     fun addObservation(obs: RawTelemetryObservation): Boolean {
         synchronized(lock) {
+            // Never straddle a session boundary (network session identity changed).
+            val sessionChanged = currentSessionId.isNotEmpty() && obs.sessionId.isNotEmpty() && currentSessionId != obs.sessionId
+
             // Check for transport changes (e.g., Cellular <-> Wi-Fi)
-            if (currentTransport != NetworkTransport.NONE && obs.transport != NetworkTransport.NONE && currentTransport != obs.transport) {
+            val transportChanged = currentTransport != NetworkTransport.NONE && obs.transport != NetworkTransport.NONE && currentTransport != obs.transport
+
+            if (sessionChanged || transportChanged) {
                 observations.clear()
                 currentTransport = obs.transport
+                currentSessionId = obs.sessionId
                 lastObservationTimestamp = obs.timestamp
                 observations.addLast(obs)
-                return false // Triggered transport reset
+                return false // Triggered a window reset
             }
 
             // Check for large temporal gaps (> 10s without measurements)
@@ -50,6 +68,7 @@ class TelemetryWindow(private val windowSize: Int = PulsePredictorConfig.WINDOW_
             }
 
             currentTransport = obs.transport
+            currentSessionId = obs.sessionId
             lastObservationTimestamp = obs.timestamp
 
             if (observations.size >= windowSize) {
@@ -70,6 +89,7 @@ class TelemetryWindow(private val windowSize: Int = PulsePredictorConfig.WINDOW_
         synchronized(lock) {
             observations.clear()
             currentTransport = NetworkTransport.NONE
+            currentSessionId = ""
             lastObservationTimestamp = 0L
         }
     }

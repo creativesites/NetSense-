@@ -41,10 +41,13 @@ class RadarEngine(private val context: Context) {
         var ssid = "<Connected Wi-Fi>"
         var bssid: String? = null
         var freq = 5180
-        var rssi = snapshot.signalDbm ?: -65
+        var rssi = snapshot.signalDbm ?: -65 // display-only fallback; see isRssiMeasured
+        var isRssiMeasured = false
         var linkSpeed = 433
         var txSpeed = 433
         var rxSpeed = 433
+        var gatewayIp: String? = null
+        var subnetMask: String? = null
 
         try {
             val info: WifiInfo? = wifiManager.connectionInfo
@@ -58,6 +61,7 @@ class RadarEngine(private val context: Context) {
                 }
                 if (info.rssi != 0 && info.rssi > -127) {
                     rssi = info.rssi
+                    isRssiMeasured = true
                 }
                 if (info.linkSpeed > 0) {
                     linkSpeed = info.linkSpeed
@@ -66,6 +70,13 @@ class RadarEngine(private val context: Context) {
                     if (info.txLinkSpeedMbps > 0) txSpeed = info.txLinkSpeedMbps
                     if (info.rxLinkSpeedMbps > 0) rxSpeed = info.rxLinkSpeedMbps
                 }
+            }
+            // Real DHCP lease info (actual gateway/netmask), never a fabricated address.
+            @Suppress("DEPRECATION")
+            val dhcpInfo = wifiManager.dhcpInfo
+            if (dhcpInfo != null) {
+                if (dhcpInfo.gateway != 0) gatewayIp = intToIpAddress(dhcpInfo.gateway)
+                if (dhcpInfo.netmask != 0) subnetMask = intToIpAddress(dhcpInfo.netmask)
             }
         } catch (e: Exception) {
             // Permission fallback
@@ -114,17 +125,22 @@ class RadarEngine(private val context: Context) {
             channelNumber = channel,
             channelWidthMhz = channelWidth,
             rssiDbm = rssi,
+            isRssiMeasured = isRssiMeasured,
             linkSpeedMbps = linkSpeed,
             txLinkSpeedMbps = txSpeed,
             rxLinkSpeedMbps = rxSpeed,
             wifiStandard = standard,
-            gatewayIp = "192.168.1.1",
-            subnetMask = "255.255.255.0",
+            gatewayIp = gatewayIp,
+            subnetMask = subnetMask,
             signalStrengthPercent = signalPercent,
             congestionLevel = congestion,
             interferenceRisk = interference
         )
     }
+
+    /** Converts a little-endian packed IPv4 address (as returned by DhcpInfo) to dotted-decimal. */
+    private fun intToIpAddress(addr: Int): String =
+        "${addr and 0xFF}.${addr shr 8 and 0xFF}.${addr shr 16 and 0xFF}.${addr shr 24 and 0xFF}"
 
     fun getCellularRfSnapshot(
         snapshot: NetworkSnapshot,
@@ -136,16 +152,21 @@ class RadarEngine(private val context: Context) {
         val carrier = telephony.carrierName ?: snapshot.carrierName ?: "Carrier LTE/5G"
         val netType = telephony.networkType.takeIf { it != "Unknown" } ?: snapshot.cellularDataNetworkType ?: "4G LTE"
 
-        var rsrp: Int? = telephony.signalDbm ?: snapshot.signalDbm ?: -88
-        var rsrq: Int? = -11
-        var sinr: Int? = 16
-        var cqi: Int? = 12
-        var cellId: String? = "460-01-28941-102"
-        var pci: Int? = 184
-        var tac: Int? = 4120
-        var band = if (netType.contains("5G")) "5G NR n78 (3500 MHz)" else "LTE Band 3 (1800 MHz)"
+        // rsrp may fall back to the TelephonyCallback signal-strength reading (still a real
+        // measurement, just coarser than a registered-cell RSRP). All other RF fields below
+        // start as null (unmeasured) and are ONLY set from a genuine CellInfoLte/Nr reading -
+        // never from a plausible-looking placeholder. See CellularRfSnapshot.isRfDataMeasured.
+        var rsrp: Int? = telephony.signalDbm ?: snapshot.signalDbm
+        var rsrq: Int? = null
+        var sinr: Int? = null
+        var cqi: Int? = null
+        var cellId: String? = null
+        var pci: Int? = null
+        var tac: Int? = null
+        var band: String? = null
         var isRoaming = false
         var isCA = netType.contains("5G") || netType.contains("LTE-A")
+        var isRfDataMeasured = false
 
         try {
             if (telephonyManager != null) {
@@ -155,20 +176,23 @@ class RadarEngine(private val context: Context) {
                 if (registeredCell is CellInfoLte) {
                     val ss = registeredCell.cellSignalStrength
                     rsrp = ss.rsrp.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: rsrp
-                    rsrq = ss.rsrq.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: rsrq
-                    sinr = ss.rssnr.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: sinr
-                    cqi = ss.cqi.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: cqi
+                    rsrq = ss.rsrq.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
+                    sinr = ss.rssnr.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
+                    cqi = ss.cqi.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
                     val id = registeredCell.cellIdentity
-                    pci = id.pci.takeIf { it != CellInfo.UNAVAILABLE } ?: pci
-                    tac = id.tac.takeIf { it != CellInfo.UNAVAILABLE } ?: tac
+                    pci = id.pci.takeIf { it != CellInfo.UNAVAILABLE }
+                    tac = id.tac.takeIf { it != CellInfo.UNAVAILABLE }
                     if (id.ci != CellInfo.UNAVAILABLE) cellId = id.ci.toString()
+                    band = "LTE"
+                    isRfDataMeasured = true
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && registeredCell is CellInfoNr) {
                     val ss = registeredCell.cellSignalStrength as? CellSignalStrengthNr
                     if (ss != null) {
                         rsrp = ss.ssRsrp.takeIf { it != CellInfo.UNAVAILABLE } ?: rsrp
-                        rsrq = ss.ssRsrq.takeIf { it != CellInfo.UNAVAILABLE } ?: rsrq
-                        sinr = ss.ssSinr.takeIf { it != CellInfo.UNAVAILABLE } ?: sinr
-                        band = "5G NR Sub-6 (n78/n41)"
+                        rsrq = ss.ssRsrq.takeIf { it != CellInfo.UNAVAILABLE }
+                        sinr = ss.ssSinr.takeIf { it != CellInfo.UNAVAILABLE }
+                        band = "5G NR"
+                        isRfDataMeasured = true
                     }
                 }
             }
@@ -188,6 +212,7 @@ class RadarEngine(private val context: Context) {
             pci = pci,
             tac = tac,
             bandIndicator = band,
+            isRfDataMeasured = isRfDataMeasured,
             isRoaming = isRoaming,
             isCarrierAggregationActive = isCA,
             simState = if (telephony.isSimReady) "Active / Ready" else "No SIM / Searching"

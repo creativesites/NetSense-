@@ -14,6 +14,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.netsense.netpulse.analytics.DiagnosticExporter
+import com.netsense.netpulse.dataset.DatasetExportFormat
+import com.netsense.netpulse.dataset.DatasetExportService
 import com.netsense.netpulse.ui.NetPulseDashboard
 import com.netsense.netpulse.ui.NetPulseViewModel
 import com.netsense.netpulse.ui.UiEvent
@@ -36,6 +38,10 @@ class MainActivity : ComponentActivity() {
                             is UiEvent.ShareCsv -> {
                                 val shareIntent = DiagnosticExporter.shareCsvIntent(this@MainActivity, event.file)
                                 startActivity(Intent.createChooser(shareIntent, "Share NetPulse Diagnostics CSV"))
+                            }
+                            is UiEvent.ShareFile -> {
+                                val shareIntent = DatasetExportService.shareIntent(this@MainActivity, event.file, event.mimeType)
+                                startActivity(Intent.createChooser(shareIntent, "Share NetPulse ML Dataset"))
                             }
                             is UiEvent.ShareText -> {
                                 val sendIntent = Intent().apply {
@@ -69,6 +75,7 @@ class MainActivity : ComponentActivity() {
                         onUpdateDnsProvider = { dns -> viewModel.updateDnsProviderSetting(dns) },
                         onUpdateDataSaver = { enabled -> viewModel.updateDataSaverSetting(enabled) },
                         onExportCsv = { viewModel.exportDiagnosticsCsv(this@MainActivity) },
+                        onExportMlDataset = { viewModel.exportMlDataset(this@MainActivity, DatasetExportFormat.JSONL) },
                         onClearHistory = { viewModel.clearLogHistory() },
                         onDeleteLog = { id -> viewModel.deleteLog(id) },
                         onRunPingMatrix = { viewModel.runPingMatrix() },

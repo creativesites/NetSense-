@@ -529,9 +529,9 @@ fun CellularRfCard(cellular: CellularRfSnapshot) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RfChip("Serving Band", cellular.bandIndicator ?: "LTE/5G", Modifier.weight(1.2f))
-                RfChip("CQI Index", "CQI ${cellular.cqi ?: 12}", Modifier.weight(0.9f))
-                RfChip("Cell ID / PCI", "${cellular.pci ?: 184} (PCI)", Modifier.weight(0.9f))
+                RfChip("Serving Band", cellular.bandIndicator ?: "N/A", Modifier.weight(1.2f))
+                RfChip("CQI Index", cellular.cqi?.let { "CQI $it" } ?: "N/A", Modifier.weight(0.9f))
+                RfChip("Cell ID / PCI", cellular.pci?.let { "$it (PCI)" } ?: "N/A", Modifier.weight(0.9f))
             }
         }
     }

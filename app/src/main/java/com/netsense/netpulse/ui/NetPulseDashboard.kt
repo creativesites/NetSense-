@@ -154,6 +154,7 @@ fun NetPulseDashboard(
     onUpdateDnsProvider: (String) -> Unit = {},
     onUpdateDataSaver: (Boolean) -> Unit = {},
     onExportCsv: () -> Unit = {},
+    onExportMlDataset: () -> Unit = {},
     onClearHistory: () -> Unit = {},
     onDeleteLog: (Long) -> Unit = {},
     onRunPingMatrix: () -> Unit = {},
@@ -329,6 +330,7 @@ fun NetPulseDashboard(
                     AnalyticsLogsTabContent(
                         uiState = uiState,
                         onExportCsv = onExportCsv,
+                        onExportMlDataset = onExportMlDataset,
                         onClearHistory = onClearHistory,
                         onDeleteLog = onDeleteLog,
                         onGenerateReport = onGenerateIncidentReport,
@@ -2111,6 +2113,7 @@ fun TroubleshootFindingCard(
 fun AnalyticsLogsTabContent(
     uiState: DashboardUiState,
     onExportCsv: () -> Unit,
+    onExportMlDataset: () -> Unit = {},
     onClearHistory: () -> Unit,
     onDeleteLog: (Long) -> Unit,
     onGenerateReport: () -> Unit,
@@ -2246,6 +2249,23 @@ fun AnalyticsLogsTabContent(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Clear Logs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
+            }
+        }
+
+        // ML Dataset Export (Part 13) - production (non-synthetic) telemetry + resolved
+        // labels only, for offline PulsePredictor experimentation. Never trains anything
+        // on-device.
+        item {
+            OutlinedButton(
+                onClick = onExportMlDataset,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("export_ml_dataset_button")
+            ) {
+                Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Export ML Training Dataset (JSONL)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
