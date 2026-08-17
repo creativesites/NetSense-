@@ -16,3 +16,16 @@
 local.properties
 .env
 debug.keystore
+
+# NetPulse ML Lab (ml/) - see ml/README.md
+ml/.venv
+ml/__pycache__/
+ml/**/__pycache__/
+ml/.pytest_cache/
+ml/data/*.csv
+ml/data/*.jsonl
+ml/data/*.db
+ml/experiments/*.json
+ml/reports/*.md
+!ml/reports/README.md
+!ml/reports/leakage_audit.md

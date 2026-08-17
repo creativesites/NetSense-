@@ -1,0 +1,13 @@
+# NetPulse PulsePredictor Model Lab - offline ML experimentation environment.
+#
+# Deliberately minimal. TensorFlow is included only because Phase 7/13 of the model-lab
+# spec requires a small 1D CNN plus FP32/FP16/INT8 comparisons, and TFLite conversion (a
+# LATER phase, not this one) is a TensorFlow/Keras artifact. Everything else is the
+# standard pandas/numpy/scikit-learn/matplotlib stack explicitly requested.
+
+pandas>=2.2,<3
+numpy>=1.26,<3
+scikit-learn>=1.4,<2
+matplotlib>=3.8,<4
+tensorflow-cpu>=2.16,<3
+pytest>=8.0,<9
