@@ -10,11 +10,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.netsense.netpulse"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.netpulse.kpzvqr"
+    applicationId = "com.netsense.netpulse"
     minSdk = 26
     targetSdk = 36
     versionCode = 1
@@ -31,12 +31,6 @@ android {
       keyAlias = "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
   }
 
   buildTypes {
@@ -46,7 +40,10 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
+    // debug build type intentionally left without an explicit signingConfig so
+    // it falls back to AGP's built-in "debug" config, which auto-generates and
+    // uses ~/.android/debug.keystore. This keeps a clean checkout buildable
+    // without committing a keystore.
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
