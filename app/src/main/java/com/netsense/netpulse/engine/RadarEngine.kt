@@ -1,6 +1,9 @@
 package com.netsense.netpulse.engine
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.wifi.WifiInfo
@@ -14,9 +17,12 @@ import android.telephony.CellInfoWcdma
 import android.telephony.CellSignalStrengthLte
 import android.telephony.CellSignalStrengthNr
 import android.telephony.TelephonyManager
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.netsense.netpulse.model.CellularRfSnapshot
 import com.netsense.netpulse.model.NetworkSnapshot
 import com.netsense.netpulse.model.NetworkTransport
+import com.netsense.netpulse.model.RfUnavailableReason
 import com.netsense.netpulse.model.WifiBand
 import com.netsense.netpulse.model.WifiRadarSnapshot
 import com.netsense.netpulse.telephony.TelephonySnapshot
@@ -29,6 +35,18 @@ class RadarEngine(private val context: Context) {
     private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val telephonyManager = context.applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
     private val connectivityManager = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private val locationManager = context.applicationContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+
+    /** Android requires ACCESS_FINE_LOCATION AND the system Location toggle to be on before
+     *  TelephonyManager.getAllCellInfo() will return real registered-cell data - a permission
+     *  grant alone is not enough. Both are checked explicitly so the UI can tell the two
+     *  failure modes apart instead of showing a single generic "unavailable". */
+    fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    fun isLocationServicesEnabled(): Boolean =
+        locationManager?.let { LocationManagerCompat.isLocationEnabled(it) } ?: false
 
     fun getWifiRadarSnapshot(snapshot: NetworkSnapshot): WifiRadarSnapshot {
         val isWifi = snapshot.primaryTransport == NetworkTransport.WIFI ||
@@ -167,37 +185,53 @@ class RadarEngine(private val context: Context) {
         var isRoaming = false
         var isCA = netType.contains("5G") || netType.contains("LTE-A")
         var isRfDataMeasured = false
+        var unavailableReason: RfUnavailableReason? = if (isCellular) null else RfUnavailableReason.NOT_CELLULAR
 
-        try {
-            if (telephonyManager != null) {
-                isRoaming = telephonyManager.isNetworkRoaming
-                val allCellInfo: List<CellInfo>? = telephonyManager.allCellInfo
-                val registeredCell = allCellInfo?.firstOrNull { it.isRegistered }
-                if (registeredCell is CellInfoLte) {
-                    val ss = registeredCell.cellSignalStrength
-                    rsrp = ss.rsrp.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: rsrp
-                    rsrq = ss.rsrq.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
-                    sinr = ss.rssnr.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
-                    cqi = ss.cqi.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
-                    val id = registeredCell.cellIdentity
-                    pci = id.pci.takeIf { it != CellInfo.UNAVAILABLE }
-                    tac = id.tac.takeIf { it != CellInfo.UNAVAILABLE }
-                    if (id.ci != CellInfo.UNAVAILABLE) cellId = id.ci.toString()
-                    band = "LTE"
-                    isRfDataMeasured = true
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && registeredCell is CellInfoNr) {
-                    val ss = registeredCell.cellSignalStrength as? CellSignalStrengthNr
-                    if (ss != null) {
-                        rsrp = ss.ssRsrp.takeIf { it != CellInfo.UNAVAILABLE } ?: rsrp
-                        rsrq = ss.ssRsrq.takeIf { it != CellInfo.UNAVAILABLE }
-                        sinr = ss.ssSinr.takeIf { it != CellInfo.UNAVAILABLE }
-                        band = "5G NR"
-                        isRfDataMeasured = true
+        if (isCellular) {
+            if (!hasLocationPermission()) {
+                unavailableReason = RfUnavailableReason.PERMISSION_DENIED
+            } else if (!isLocationServicesEnabled()) {
+                unavailableReason = RfUnavailableReason.LOCATION_SERVICES_DISABLED
+            } else {
+                try {
+                    if (telephonyManager != null) {
+                        isRoaming = telephonyManager.isNetworkRoaming
+                        val allCellInfo: List<CellInfo>? = telephonyManager.allCellInfo
+                        val registeredCell = allCellInfo?.firstOrNull { it.isRegistered }
+                        if (registeredCell is CellInfoLte) {
+                            val ss = registeredCell.cellSignalStrength
+                            rsrp = ss.rsrp.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE } ?: rsrp
+                            rsrq = ss.rsrq.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
+                            sinr = ss.rssnr.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
+                            cqi = ss.cqi.takeIf { it != CellInfo.UNAVAILABLE && it != Int.MAX_VALUE }
+                            val id = registeredCell.cellIdentity
+                            pci = id.pci.takeIf { it != CellInfo.UNAVAILABLE }
+                            tac = id.tac.takeIf { it != CellInfo.UNAVAILABLE }
+                            if (id.ci != CellInfo.UNAVAILABLE) cellId = id.ci.toString()
+                            band = "LTE"
+                            isRfDataMeasured = true
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && registeredCell is CellInfoNr) {
+                            val ss = registeredCell.cellSignalStrength as? CellSignalStrengthNr
+                            if (ss != null) {
+                                rsrp = ss.ssRsrp.takeIf { it != CellInfo.UNAVAILABLE } ?: rsrp
+                                rsrq = ss.ssRsrq.takeIf { it != CellInfo.UNAVAILABLE }
+                                sinr = ss.ssSinr.takeIf { it != CellInfo.UNAVAILABLE }
+                                band = "5G NR"
+                                isRfDataMeasured = true
+                            }
+                        } else {
+                            unavailableReason = RfUnavailableReason.NO_REGISTERED_CELL
+                        }
+                    } else {
+                        unavailableReason = RfUnavailableReason.NO_REGISTERED_CELL
                     }
+                } catch (e: SecurityException) {
+                    unavailableReason = RfUnavailableReason.PERMISSION_DENIED
+                } catch (e: Exception) {
+                    unavailableReason = RfUnavailableReason.NO_REGISTERED_CELL
                 }
+                if (isRfDataMeasured) unavailableReason = null
             }
-        } catch (e: Exception) {
-            // Permission graceful fallback
         }
 
         return CellularRfSnapshot(
@@ -213,6 +247,7 @@ class RadarEngine(private val context: Context) {
             tac = tac,
             bandIndicator = band,
             isRfDataMeasured = isRfDataMeasured,
+            unavailableReason = unavailableReason,
             isRoaming = isRoaming,
             isCarrierAggregationActive = isCA,
             simState = if (telephony.isSimReady) "Active / Ready" else "No SIM / Searching"

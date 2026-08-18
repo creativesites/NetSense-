@@ -47,15 +47,25 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
     /**
      * Re-evaluates every PENDING attempt against the current network state. Safe to call
      * frequently (e.g. once per telemetry cycle) - typically zero rows are pending.
+     *
+     * Returns whether a PulsePolicy-driven caller should currently treat recovery as "in
+     * progress" ([RecoveryResolution.hasPending]) or as having "just succeeded" this exact
+     * call ([RecoveryResolution.justRecovered]) - both derived from the same real
+     * before/after validation used to resolve the row, never from an action merely completing.
      */
     suspend fun resolvePending(
         snapshot: NetworkSnapshot,
         score: UsabilityScoreResult,
         nowMs: Long = System.currentTimeMillis()
-    ) {
+    ): RecoveryResolution {
+        var justRecovered = false
+        var stillPending = false
         for (attempt in dao.getPending()) {
             val elapsed = nowMs - attempt.timestamp
-            if (elapsed < MIN_SETTLE_MS) continue // too soon to judge
+            if (elapsed < MIN_SETTLE_MS) {
+                stillPending = true
+                continue // too soon to judge
+            }
 
             val recovered = snapshot.isValidated &&
                 !score.isZombieConnection &&
@@ -72,6 +82,7 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
                     timeToRecoveryMs = elapsed,
                     internetActuallyReturned = true
                 )
+                justRecovered = true
             } else if (elapsed >= RECOVERY_TIMEOUT_MS) {
                 dao.resolveOutcome(
                     id = attempt.id,
@@ -83,8 +94,16 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
                     timeToRecoveryMs = elapsed,
                     internetActuallyReturned = snapshot.isValidated
                 )
+            } else {
+                // Still within the grace period - leave PENDING for the next cycle.
+                stillPending = true
             }
-            // else: still within the grace period - leave PENDING for the next cycle.
         }
+        return RecoveryResolution(hasPending = stillPending, justRecovered = justRecovered)
     }
 }
+
+data class RecoveryResolution(
+    val hasPending: Boolean,
+    val justRecovered: Boolean
+)

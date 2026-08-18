@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.model.CellularRfSnapshot
 import com.netsense.netpulse.model.NetworkComparisonSummary
 import com.netsense.netpulse.model.NetworkTransport
+import com.netsense.netpulse.model.RfUnavailableReason
 import com.netsense.netpulse.model.WifiBand
 import com.netsense.netpulse.model.WifiRadarSnapshot
 import com.netsense.netpulse.ui.theme.NetPulseAccent
@@ -449,7 +451,11 @@ fun WifiRadarCard(radar: WifiRadarSnapshot) {
 }
 
 @Composable
-fun CellularRfCard(cellular: CellularRfSnapshot) {
+fun CellularRfCard(
+    cellular: CellularRfSnapshot,
+    onRequestLocationPermission: () -> Unit = {},
+    onOpenLocationSettings: () -> Unit = {}
+) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
@@ -513,14 +519,26 @@ fun CellularRfCard(cellular: CellularRfSnapshot) {
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // RF Engineering Grid (RSRP, RSRQ, SINR, CQI)
+            if (cellular.unavailableReason != null) {
+                RfUnavailableBanner(
+                    reason = cellular.unavailableReason,
+                    onRequestLocationPermission = onRequestLocationPermission,
+                    onOpenLocationSettings = onOpenLocationSettings
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // RF Engineering Grid (RSRP, RSRQ, SINR, CQI) - "N/A" whenever the detailed
+            // registered-cell reading wasn't actually measured this cycle. Never fabricate
+            // a plausible-looking placeholder number here.
+            val measured = cellular.isRfDataMeasured
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RfChip("RSRP (Power)", "${cellular.rsrpDbm ?: -88} dBm", Modifier.weight(1f))
-                RfChip("RSRQ (Quality)", "${cellular.rsrqDb ?: -11} dB", Modifier.weight(1f))
-                RfChip("SINR (SNR)", "${cellular.sinrDb ?: 16} dB", Modifier.weight(1f))
+                RfChip("RSRP (Power)", cellular.rsrpDbm?.let { "$it dBm" } ?: "N/A", Modifier.weight(1f), isMeasured = cellular.rsrpDbm != null)
+                RfChip("RSRQ (Quality)", cellular.rsrqDb?.let { "$it dB" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
+                RfChip("SINR (SNR)", cellular.sinrDb?.let { "$it dB" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -529,16 +547,81 @@ fun CellularRfCard(cellular: CellularRfSnapshot) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RfChip("Serving Band", cellular.bandIndicator ?: "N/A", Modifier.weight(1.2f))
-                RfChip("CQI Index", cellular.cqi?.let { "CQI $it" } ?: "N/A", Modifier.weight(0.9f))
-                RfChip("Cell ID / PCI", cellular.pci?.let { "$it (PCI)" } ?: "N/A", Modifier.weight(0.9f))
+                RfChip("Serving Band", cellular.bandIndicator ?: "N/A", Modifier.weight(1.2f), isMeasured = measured)
+                RfChip("CQI Index", cellular.cqi?.let { "CQI $it" } ?: "N/A", Modifier.weight(0.9f), isMeasured = measured)
+                RfChip("Cell ID / PCI", cellular.pci?.let { "$it (PCI)" } ?: "N/A", Modifier.weight(0.9f), isMeasured = measured)
             }
         }
     }
 }
 
 @Composable
-private fun RfChip(label: String, value: String, modifier: Modifier = Modifier) {
+private fun RfUnavailableBanner(
+    reason: RfUnavailableReason,
+    onRequestLocationPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit
+) {
+    val (message, actionLabel, action) = when (reason) {
+        RfUnavailableReason.PERMISSION_DENIED -> Triple(
+            "Detailed RF telemetry (RSRQ/SINR/CQI/Cell ID) requires Location permission - Android ties cell-tower detail to it.",
+            "Grant Location",
+            onRequestLocationPermission
+        )
+        RfUnavailableReason.LOCATION_SERVICES_DISABLED -> Triple(
+            "Location permission is granted, but system Location Services is off. Android blocks cell-tower detail while it's off, even with permission granted.",
+            "Turn On Location",
+            onOpenLocationSettings
+        )
+        RfUnavailableReason.NO_REGISTERED_CELL -> Triple(
+            "Not available from the modem right now (no registered cell info this cycle).",
+            null,
+            null
+        )
+        RfUnavailableReason.NOT_CELLULAR -> Triple(
+            "Not on cellular right now - connect via mobile data to see RF telemetry.",
+            null,
+            null
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = StatusDegradedBg,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("rf_unavailable_banner")
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = StatusDegraded,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = message,
+                    fontSize = 12.sp,
+                    color = NetPulseTextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (actionLabel != null && action != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = action,
+                    modifier = Modifier.testTag("rf_unavailable_action_button")
+                ) {
+                    Text(actionLabel, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RfChip(label: String, value: String, modifier: Modifier = Modifier, isMeasured: Boolean = true) {
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = NetPulseSurfaceVariant,
@@ -547,7 +630,13 @@ private fun RfChip(label: String, value: String, modifier: Modifier = Modifier) 
         Column(modifier = Modifier.padding(8.dp)) {
             Text(label, fontSize = 10.sp, color = NetPulseTextTertiary)
             Spacer(modifier = Modifier.height(2.dp))
-            Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = NetPulseTextPrimary, maxLines = 1)
+            Text(
+                value,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isMeasured) NetPulseTextPrimary else NetPulseTextTertiary,
+                maxLines = 1
+            )
         }
     }
 }

@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.engine.SimulatedFaultScenario
 import com.netsense.netpulse.model.HealerActionItem
 import com.netsense.netpulse.model.HealerActionType
+import com.netsense.netpulse.policy.PolicyDecision
 import com.netsense.netpulse.ui.theme.NetPulseAccent
 import com.netsense.netpulse.ui.theme.NetPulseAccentContainer
 import com.netsense.netpulse.ui.theme.NetPulseOnAccentContainer
@@ -67,7 +68,8 @@ import com.netsense.netpulse.ui.theme.StatusZombieBg
 @Composable
 fun SmartHealerCard(
     actions: List<HealerActionItem>,
-    onExecuteAction: (HealerActionItem) -> Unit
+    onExecuteAction: (HealerActionItem) -> Unit,
+    policyDecision: PolicyDecision? = null
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -111,6 +113,28 @@ fun SmartHealerCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            if (policyDecision != null) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = NetPulseSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("pulse_policy_reason_banner")
+                ) {
+                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.Science, contentDescription = null, tint = NetPulseAccent, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "PulsePolicy: ${policyDecision.reason}",
+                            fontSize = 12.sp,
+                            color = NetPulseTextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
             if (actions.isEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -127,7 +151,11 @@ fun SmartHealerCard(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     actions.forEach { action ->
-                        HealerActionRow(action, onExecute = { onExecuteAction(action) })
+                        HealerActionRow(
+                            action,
+                            onExecute = { onExecuteAction(action) },
+                            isPolicyRecommended = policyDecision?.recommendedAction?.id == action.id
+                        )
                     }
                 }
             }
@@ -138,7 +166,8 @@ fun SmartHealerCard(
 @Composable
 private fun HealerActionRow(
     action: HealerActionItem,
-    onExecute: () -> Unit
+    onExecute: () -> Unit,
+    isPolicyRecommended: Boolean = false
 ) {
     val impactBg = when (action.impactLevel) {
         "High Impact" -> StatusUnusableBg
@@ -162,10 +191,27 @@ private fun HealerActionRow(
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = NetPulseSurfaceVariant,
-        modifier = Modifier.fillMaxWidth()
+        color = if (isPolicyRecommended) NetPulseAccentContainer.copy(alpha = 0.25f) else NetPulseSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(if (isPolicyRecommended) "policy_recommended_action" else "healer_action_row")
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            if (isPolicyRecommended) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = NetPulseAccent,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                ) {
+                    Text(
+                        text = "PULSEPOLICY RECOMMENDED",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

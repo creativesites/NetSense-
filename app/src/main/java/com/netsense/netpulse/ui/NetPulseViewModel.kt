@@ -60,10 +60,13 @@ import com.netsense.netpulse.model.IncidentReport
 import com.netsense.netpulse.model.NetworkComparisonSummary
 import com.netsense.netpulse.model.NetworkSnapshot
 import com.netsense.netpulse.model.PingTargetResult
+import com.netsense.netpulse.model.ProductStatus
 import com.netsense.netpulse.model.TargetCategory
 import com.netsense.netpulse.model.UsabilityRating
 import com.netsense.netpulse.model.UsabilityScoreResult
 import com.netsense.netpulse.model.WifiRadarSnapshot
+import com.netsense.netpulse.policy.PolicyDecision
+import com.netsense.netpulse.policy.PulsePolicyEngine
 import com.netsense.netpulse.service.NetPulseSentinelService
 import com.netsense.netpulse.telephony.TelephonyObserver
 import com.netsense.netpulse.telephony.TelephonySnapshot
@@ -129,6 +132,14 @@ data class DashboardUiState(
     val healerActions: List<HealerActionItem> = emptyList(),
     val incidentReport: IncidentReport? = null,
     val isGeneratingReport: Boolean = false,
+
+    // Productization: PulsePolicy's deterministic status + recommended-action decision
+    val policyDecision: PolicyDecision = PolicyDecision(
+        state = ProductStatus.CHECKING,
+        recommendedAction = null,
+        reason = "Initializing...",
+        predictionAvailable = false
+    ),
 
     // Phase 9: Pulse Intelligence & Gemini Copilot
     val prediction: PulsePrediction = PulsePrediction.unavailable(),
@@ -270,7 +281,19 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                 val realScoreForRecovery = if (scenario != SimulatedFaultScenario.NONE) {
                     UsabilityEngine.calculateScore(enrichedSnapshot, _uiState.value.probeResult)
                 } else score
-                recoveryOutcomeTracker.resolvePending(enrichedSnapshot, realScoreForRecovery)
+                val recoveryResolution = recoveryOutcomeTracker.resolvePending(enrichedSnapshot, realScoreForRecovery)
+
+                val policyDecision = PulsePolicyEngine.decide(
+                    snapshot = effectiveSnapshot,
+                    scoreResult = score,
+                    classification = finalClassification,
+                    wifiRadar = wifiRadar,
+                    cellularRf = cellularRf,
+                    healerActions = healingActions,
+                    isProbing = _uiState.value.isProbing,
+                    isRecoveryPending = recoveryResolution.hasPending,
+                    justRecovered = recoveryResolution.justRecovered
+                )
 
                 val (prediction, explanation, telemetryCount) = processTelemetryAndInference(
                     snapshot = effectiveSnapshot,
@@ -292,6 +315,7 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                         cellularRf = cellularRf,
                         networkComparison = comparison,
                         healerActions = healingActions,
+                        policyDecision = policyDecision,
                         prediction = prediction,
                         pulseMindExplanation = explanation,
                         mlTelemetryCount = telemetryCount,
@@ -366,6 +390,15 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
             _uiState.value.pingMatrixResults,
             _uiState.value.dualStackResult
         )
+        val policyDecision = PulsePolicyEngine.decide(
+            snapshot = effectiveSnapshot,
+            scoreResult = score,
+            classification = classification,
+            wifiRadar = wifiRadar,
+            cellularRf = cellularRf,
+            healerActions = healingActions,
+            isProbing = _uiState.value.isProbing
+        )
 
         _uiState.update { current ->
             current.copy(
@@ -376,7 +409,8 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                 wifiRadar = wifiRadar,
                 cellularRf = cellularRf,
                 networkComparison = comparison,
-                healerActions = healingActions
+                healerActions = healingActions,
+                policyDecision = policyDecision
             )
         }
     }
@@ -693,6 +727,10 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
 
     fun updateDataSaverSetting(enabled: Boolean) {
         viewModelScope.launch { preferences.updateDataSaver(enabled) }
+    }
+
+    fun completeOnboarding() {
+        viewModelScope.launch { preferences.setOnboardingCompleted(true) }
     }
 
     fun clearLogHistory() {

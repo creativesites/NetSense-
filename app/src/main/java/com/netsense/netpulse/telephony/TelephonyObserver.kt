@@ -18,7 +18,11 @@ data class TelephonySnapshot(
     val networkType: String = "Unknown",
     val signalLevel: Int = 0, // 0..4
     val signalDbm: Int? = null,
-    val isSimReady: Boolean = false
+    val isSimReady: Boolean = false,
+    // False when signalLevel/signalDbm above are unmeasured defaults (e.g. telephony
+    // callback registration failed) rather than a real reading - never treat signalLevel=0
+    // as "no signal" without checking this first.
+    val isSignalMeasured: Boolean = false
 )
 
 class TelephonyObserver(private val context: Context) {
@@ -77,7 +81,8 @@ class TelephonyObserver(private val context: Context) {
                             networkType = getDataNetworkTypeString(),
                             signalLevel = level,
                             signalDbm = dbm,
-                            isSimReady = getSimReady()
+                            isSimReady = getSimReady(),
+                            isSignalMeasured = true
                         )
                     )
                 }
@@ -89,13 +94,16 @@ class TelephonyObserver(private val context: Context) {
                     callback
                 )
             } catch (e: Exception) {
-                // In case of permission restriction, send fallback
+                // Callback registration failed (e.g. permission restriction) - report this
+                // as genuinely unmeasured rather than a plausible-looking mid-strength bar.
                 trySend(
                     TelephonySnapshot(
                         carrierName = getCarrierName(),
                         networkType = getDataNetworkTypeString(),
-                        signalLevel = 2,
-                        isSimReady = getSimReady()
+                        signalLevel = 0,
+                        signalDbm = null,
+                        isSimReady = getSimReady(),
+                        isSignalMeasured = false
                     )
                 )
             }
@@ -110,13 +118,14 @@ class TelephonyObserver(private val context: Context) {
             val listener = object : PhoneStateListener() {
                 @Deprecated("Deprecated in Java")
                 override fun onSignalStrengthsChanged(signalStrength: SignalStrength?) {
-                    val level = signalStrength?.level ?: 0
+                    val level = signalStrength?.level
                     trySend(
                         TelephonySnapshot(
                             carrierName = getCarrierName(),
                             networkType = getDataNetworkTypeString(),
-                            signalLevel = level,
-                            isSimReady = getSimReady()
+                            signalLevel = level ?: 0,
+                            isSimReady = getSimReady(),
+                            isSignalMeasured = level != null
                         )
                     )
                 }

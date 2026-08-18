@@ -19,7 +19,8 @@ data class AppSettings(
     val alertThresholdScore: Int = 40,
     val sentinelIntervalSeconds: Long = 45L,
     val preferredDnsProvider: String = "Google (8.8.8.8)",
-    val dataSaverMode: Boolean = true
+    val dataSaverMode: Boolean = true,
+    val onboardingCompleted: Boolean = false
 )
 
 class NetPulsePreferences(private val context: Context) {
@@ -30,6 +31,7 @@ class NetPulsePreferences(private val context: Context) {
         val KEY_SENTINEL_INTERVAL = longPreferencesKey("sentinel_interval_seconds")
         val KEY_DNS_PROVIDER = stringPreferencesKey("preferred_dns_provider")
         val KEY_DATA_SAVER = booleanPreferencesKey("data_saver_mode")
+        val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { preferences ->
@@ -38,7 +40,8 @@ class NetPulsePreferences(private val context: Context) {
             alertThresholdScore = preferences[KEY_ALERT_THRESHOLD] ?: 40,
             sentinelIntervalSeconds = preferences[KEY_SENTINEL_INTERVAL] ?: 45L,
             preferredDnsProvider = preferences[KEY_DNS_PROVIDER] ?: "Google (8.8.8.8)",
-            dataSaverMode = preferences[KEY_DATA_SAVER] ?: true
+            dataSaverMode = preferences[KEY_DATA_SAVER] ?: true,
+            onboardingCompleted = preferences[KEY_ONBOARDING_COMPLETED] ?: false
         )
     }
 
@@ -69,6 +72,12 @@ class NetPulsePreferences(private val context: Context) {
     suspend fun updateDataSaver(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_DATA_SAVER] = enabled
+        }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_ONBOARDING_COMPLETED] = completed
         }
     }
 }

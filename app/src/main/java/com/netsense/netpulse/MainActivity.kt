@@ -1,11 +1,15 @@
 package com.netsense.netpulse
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -18,6 +22,7 @@ import com.netsense.netpulse.dataset.DatasetExportFormat
 import com.netsense.netpulse.dataset.DatasetExportService
 import com.netsense.netpulse.ui.NetPulseDashboard
 import com.netsense.netpulse.ui.NetPulseViewModel
+import com.netsense.netpulse.ui.OnboardingScreen
 import com.netsense.netpulse.ui.UiEvent
 import com.netsense.netpulse.ui.theme.NetPulseTheme
 
@@ -31,6 +36,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             NetPulseTheme {
                 val uiState by viewModel.uiState.collectAsState()
+
+                val onboardingPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestMultiplePermissions()
+                ) { /* re-checked reactively wherever it's read */ }
 
                 LaunchedEffect(Unit) {
                     viewModel.uiEvents.collect { event ->
@@ -60,6 +69,23 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Surface(modifier = Modifier.fillMaxSize()) {
+                  if (!uiState.appSettings.onboardingCompleted) {
+                    OnboardingScreen(
+                        onRequestPermissions = {
+                            val perms = mutableListOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                                Manifest.permission.READ_PHONE_STATE
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            onboardingPermissionLauncher.launch(perms.toTypedArray())
+                        },
+                        onEnableSentinel = { viewModel.toggleSentinelService(this@MainActivity) },
+                        onFinish = { viewModel.completeOnboarding() }
+                    )
+                  } else {
                     NetPulseDashboard(
                         uiState = uiState,
                         onRunProbe = { mode -> viewModel.runActiveProbe(mode) },
@@ -89,6 +115,7 @@ class MainActivity : ComponentActivity() {
                         onConsultAi = { prompt -> viewModel.consultAi(prompt) },
                         onClearAiConsultation = { viewModel.clearAiConsultation() }
                     )
+                  }
                 }
             }
         }

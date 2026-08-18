@@ -4,10 +4,17 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.location.LocationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -170,19 +177,59 @@ fun NetPulseDashboard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var hasLocationPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        )
+
+    fun checkLocationPermission() = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+
+    fun checkLocationServicesEnabled(): Boolean {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        return lm?.let { LocationManagerCompat.isLocationEnabled(it) } ?: false
     }
+
+    var hasLocationPermission by remember { mutableStateOf(checkLocationPermission()) }
+    var isLocationServicesEnabled by remember { mutableStateOf(checkLocationServicesEnabled()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+    }
+
+    // Both permission grant AND the system Location toggle can change while this screen is
+    // backgrounded (user grants from system Settings, or flips Location off/on) - re-check
+    // on every resume instead of only reacting to the in-app permission launcher callback.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasLocationPermission = checkLocationPermission()
+                isLocationServicesEnabled = checkLocationServicesEnabled()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val requestLocationPermission: () -> Unit = {
+        val perms = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_PHONE_STATE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        permissionLauncher.launch(perms.toTypedArray())
+    }
+
+    val openLocationSettings: () -> Unit = {
+        try {
+            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        } catch (e: Exception) {
+            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
     }
 
     Scaffold(
@@ -273,17 +320,9 @@ fun NetPulseDashboard(
                     OverviewTabContent(
                         uiState = uiState,
                         hasLocationPermission = hasLocationPermission,
-                        onRequestPermissions = {
-                            val perms = mutableListOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION,
-                                Manifest.permission.READ_PHONE_STATE
-                            )
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                perms.add(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            permissionLauncher.launch(perms.toTypedArray())
-                        },
+                        isLocationServicesEnabled = isLocationServicesEnabled,
+                        onRequestPermissions = requestLocationPermission,
+                        onOpenLocationSettings = openLocationSettings,
                         onRunProbe = { onRunProbe(uiState.selectedMode) },
                         onNavigateToDiagnostics = { onSelectTab(DashboardTab.DIAGNOSTICS) },
                         onNavigateToTroubleshoot = { onSelectTab(DashboardTab.HEALER) },
@@ -307,7 +346,11 @@ fun NetPulseDashboard(
                     )
                 }
                 DashboardTab.RADAR -> {
-                    RadarTabContent(uiState = uiState)
+                    RadarTabContent(
+                        uiState = uiState,
+                        onRequestLocationPermission = requestLocationPermission,
+                        onOpenLocationSettings = openLocationSettings
+                    )
                 }
                 DashboardTab.SPEED_TEST -> {
                     SpeedTestTabContent(
@@ -407,7 +450,9 @@ fun MinimalistScrollableTabNavigation(
 fun OverviewTabContent(
     uiState: DashboardUiState,
     hasLocationPermission: Boolean,
+    isLocationServicesEnabled: Boolean = true,
     onRequestPermissions: () -> Unit,
+    onOpenLocationSettings: () -> Unit = {},
     onRunProbe: () -> Unit,
     onNavigateToDiagnostics: () -> Unit,
     onNavigateToTroubleshoot: () -> Unit,
@@ -429,6 +474,15 @@ fun OverviewTabContent(
         if (!hasLocationPermission) {
             item {
                 MinimalPermissionBanner(onRequest = onRequestPermissions)
+            }
+        } else if (!isLocationServicesEnabled) {
+            item {
+                MinimalPermissionBanner(
+                    onRequest = onOpenLocationSettings,
+                    title = "Location Services Off",
+                    body = "Detailed cellular RF telemetry needs system Location turned on, even though the app permission is already granted.",
+                    buttonLabel = "Turn On"
+                )
             }
         }
 
@@ -1658,7 +1712,11 @@ fun DiagnosticsTabContent(
 // TAB 3: RADAR & RF TELEMETRY CONTENT (PHASE 7)
 // -------------------------------------------------------------
 @Composable
-fun RadarTabContent(uiState: DashboardUiState) {
+fun RadarTabContent(
+    uiState: DashboardUiState,
+    onRequestLocationPermission: () -> Unit = {},
+    onOpenLocationSettings: () -> Unit = {}
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1687,7 +1745,11 @@ fun RadarTabContent(uiState: DashboardUiState) {
 
         // Cellular Baseband & RF Telemetry Card
         item {
-            CellularRfCard(cellular = uiState.cellularRf)
+            CellularRfCard(
+                cellular = uiState.cellularRf,
+                onRequestLocationPermission = onRequestLocationPermission,
+                onOpenLocationSettings = onOpenLocationSettings
+            )
         }
 
         item { Spacer(modifier = Modifier.height(16.dp)) }
@@ -1918,7 +1980,8 @@ fun HealerTabContent(
         item {
             SmartHealerCard(
                 actions = uiState.healerActions,
-                onExecuteAction = onExecuteAction
+                onExecuteAction = onExecuteAction,
+                policyDecision = uiState.policyDecision
             )
         }
 
@@ -2700,11 +2763,18 @@ fun MinimalRow(label: String, value: String, isSuccess: Boolean = true) {
 }
 
 @Composable
-fun MinimalPermissionBanner(onRequest: () -> Unit) {
+fun MinimalPermissionBanner(
+    onRequest: () -> Unit,
+    title: String = "Telemetry Permissions Recommended",
+    body: String = "Grant Location to read raw cellular signal dBm and carrier tower info.",
+    buttonLabel: String = "Grant"
+) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = NetPulseSurfaceVariant,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("permission_banner")
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -2724,13 +2794,13 @@ fun MinimalPermissionBanner(onRequest: () -> Unit) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Telemetry Permissions Recommended",
+                        text = title,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = NetPulseTextPrimary
                     )
                     Text(
-                        text = "Grant Location to read raw cellular signal dBm and carrier tower info.",
+                        text = body,
                         style = MaterialTheme.typography.bodySmall,
                         color = NetPulseTextSecondary
                     )
@@ -2747,7 +2817,7 @@ fun MinimalPermissionBanner(onRequest: () -> Unit) {
                     contentColor = Color.White
                 )
             ) {
-                Text("Grant", fontSize = 12.sp)
+                Text(buttonLabel, fontSize = 12.sp)
             }
         }
     }

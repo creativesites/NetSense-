@@ -170,6 +170,16 @@ fun SignalQualityGaugeCard(
         else -> Triple("CRITICAL", StatusUnusable, StatusUnusableBg)
     }
 
+    // Canvas's draw lambda is a DrawScope receiver, not a @Composable context, so the
+    // theme-aware color tokens (now CompositionLocal-backed for dark mode) must be resolved
+    // here and captured as plain Color locals before being used inside drawArc/drawCircle below.
+    val gaugeTrackColor = NetPulseSurfaceVariant
+    val gaugeNeedleCenterColor = NetPulseSurface
+    val gaugeUnusableColor = StatusUnusable
+    val gaugeDegradedColor = StatusDegraded
+    val gaugeGoodColor = StatusGood
+    val gaugeOptimalColor = StatusOptimal
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -256,7 +266,7 @@ fun SignalQualityGaugeCard(
 
                     // Background Track
                     drawArc(
-                        color = NetPulseSurfaceVariant,
+                        color = gaugeTrackColor,
                         startAngle = startAngle,
                         sweepAngle = sweepAngle,
                         useCenter = false,
@@ -270,10 +280,10 @@ fun SignalQualityGaugeCard(
                     if (activeSweep > 0f) {
                         drawArc(
                             brush = Brush.sweepGradient(
-                                0.0f to StatusUnusable,
-                                0.3f to StatusDegraded,
-                                0.6f to StatusGood,
-                                1.0f to StatusOptimal
+                                0.0f to gaugeUnusableColor,
+                                0.3f to gaugeDegradedColor,
+                                0.6f to gaugeGoodColor,
+                                1.0f to gaugeOptimalColor
                             ),
                             startAngle = startAngle,
                             sweepAngle = activeSweep,
@@ -299,7 +309,7 @@ fun SignalQualityGaugeCard(
                         center = Offset(needleEndX, needleEndY)
                     )
                     drawCircle(
-                        color = NetPulseSurface,
+                        color = gaugeNeedleCenterColor,
                         radius = 3.dp.toPx(),
                         center = Offset(needleEndX, needleEndY)
                     )

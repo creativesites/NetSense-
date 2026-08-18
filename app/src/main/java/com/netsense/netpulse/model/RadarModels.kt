@@ -30,6 +30,26 @@ data class WifiRadarSnapshot(
     val interferenceRisk: String = "Minimal"
 )
 
+/**
+ * Why [CellularRfSnapshot]'s detail fields (rsrqDb/sinrDb/cqi/pci/tac/cellId/bandIndicator)
+ * are null this cycle, when they are null. Distinguishing these cases is the whole point -
+ * "no location permission" and "modem returned no registered cell" call for completely
+ * different UI messaging, and neither should ever be papered over with a plausible-looking
+ * placeholder number.
+ */
+enum class RfUnavailableReason {
+    /** Not on a cellular transport right now, so there is nothing to measure. */
+    NOT_CELLULAR,
+    /** ACCESS_FINE_LOCATION is not granted - Android requires it to read CellInfo. */
+    PERMISSION_DENIED,
+    /** Permission is granted, but the system Location toggle is off - Android returns
+     *  empty/stale CellInfo in this state even with permission granted. */
+    LOCATION_SERVICES_DISABLED,
+    /** Permission + location services are both fine, but the modem returned no registered
+     *  CellInfoLte/Nr this cycle (e.g. mid-handover, 2G/3G cell with no LTE/NR detail API). */
+    NO_REGISTERED_CELL
+}
+
 data class CellularRfSnapshot(
     val isCellularConnected: Boolean = false,
     val carrierName: String? = null,
@@ -47,6 +67,10 @@ data class CellularRfSnapshot(
     val tac: Int? = null,     // Tracking Area Code
     val bandIndicator: String? = null, // e.g. "LTE Band 7 (2600 MHz)" / "5G n78"
     val isRfDataMeasured: Boolean = false, // true only when the fields above came from a real CellInfoLte/Nr reading
+    // Non-null only when isRfDataMeasured is false and the transport is cellular - explains
+    // WHY, so the UI can show "Location permission required" vs "Turn on Location Services"
+    // vs "Not available from modem right now" instead of a generic blank.
+    val unavailableReason: RfUnavailableReason? = null,
     val isRoaming: Boolean = false,
     val isCarrierAggregationActive: Boolean = false,
     val simState: String = "Ready"
