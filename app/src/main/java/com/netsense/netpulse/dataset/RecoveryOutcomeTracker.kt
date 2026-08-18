@@ -60,6 +60,7 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
     ): RecoveryResolution {
         var justRecovered = false
         var stillPending = false
+        var justResolved: ResolvedRecovery? = null
         for (attempt in dao.getPending()) {
             val elapsed = nowMs - attempt.timestamp
             if (elapsed < MIN_SETTLE_MS) {
@@ -83,6 +84,12 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
                     internetActuallyReturned = true
                 )
                 justRecovered = true
+                justResolved = ResolvedRecovery(
+                    recoveryType = attempt.recoveryType,
+                    succeeded = true,
+                    timeToRecoveryMs = elapsed,
+                    postDiagnosis = score.primaryDiagnosis
+                )
             } else if (elapsed >= RECOVERY_TIMEOUT_MS) {
                 dao.resolveOutcome(
                     id = attempt.id,
@@ -94,16 +101,33 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
                     timeToRecoveryMs = elapsed,
                     internetActuallyReturned = snapshot.isValidated
                 )
+                justResolved = ResolvedRecovery(
+                    recoveryType = attempt.recoveryType,
+                    succeeded = false,
+                    timeToRecoveryMs = elapsed,
+                    postDiagnosis = score.primaryDiagnosis
+                )
             } else {
                 // Still within the grace period - leave PENDING for the next cycle.
                 stillPending = true
             }
         }
-        return RecoveryResolution(hasPending = stillPending, justRecovered = justRecovered)
+        return RecoveryResolution(hasPending = stillPending, justRecovered = justRecovered, justResolved = justResolved)
     }
 }
 
 data class RecoveryResolution(
     val hasPending: Boolean,
-    val justRecovered: Boolean
+    val justRecovered: Boolean,
+    val justResolved: ResolvedRecovery? = null
+)
+
+/** The outcome of one recovery attempt that finished resolving this exact tick (success or
+ *  failure), carrying the real duration and real post-attempt diagnosis text so the UI never
+ *  has to invent either. */
+data class ResolvedRecovery(
+    val recoveryType: String,
+    val succeeded: Boolean,
+    val timeToRecoveryMs: Long,
+    val postDiagnosis: String
 )

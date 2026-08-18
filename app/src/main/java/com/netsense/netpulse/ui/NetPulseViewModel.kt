@@ -89,7 +89,8 @@ data class DashboardUiState(
     val telephony: TelephonySnapshot = TelephonySnapshot(),
     val probeResult: DiagnosticProbeResult? = null,
     val selectedMode: DiagnosticMode = DiagnosticMode.STANDARD,
-    val selectedTab: DashboardTab = DashboardTab.DASHBOARD,
+    val selectedPrimaryTab: PrimaryTab = PrimaryTab.HOME,
+    val selectedTab: DashboardTab = DashboardTab.DIAGNOSTICS,
     val scoreResult: UsabilityScoreResult = UsabilityScoreResult(
         score = 0,
         rating = UsabilityRating.UNUSABLE,
@@ -147,17 +148,40 @@ data class DashboardUiState(
     val mlTelemetryCount: Int = 0,
     val predictorBenchmark: PredictorBenchmarkResult? = null,
     val geminiConsultation: GeminiAiConsultation? = null,
-    val isConsultingAi: Boolean = false
+    val isConsultingAi: Boolean = false,
+
+    // Consumer redesign: real healing-in-progress state and the last resolved outcome, both
+    // driven by RecoveryOutcomeTracker's real before/after validation - never a fake timer.
+    val isHealing: Boolean = false,
+    val healingOutcome: HealingOutcome? = null
 )
 
+/** Result of the most recently resolved recovery attempt, for the Home screen's post-healing
+ *  card ("You're back online" / "We couldn't restore your connection"). */
+data class HealingOutcome(
+    val succeeded: Boolean,
+    val durationMs: Long,
+    val message: String
+)
+
+/** Top-level consumer navigation. Advanced hosts every existing engineering screen (see
+ *  [DashboardTab]) unchanged - this layer only decides what's visible by default. */
+enum class PrimaryTab(val label: String) {
+    HOME("Home"),
+    HISTORY("History"),
+    ADVANCED("Advanced"),
+    SETTINGS("Settings")
+}
+
+/** Sub-navigation inside the Advanced tab - the same engineering screens that used to be
+ *  top-level tabs, now nested one level deeper behind the consumer Home experience. */
 enum class DashboardTab(val label: String) {
-    DASHBOARD("Overview"),
     DIAGNOSTICS("Diagnostics"),
     RADAR("RF & Radar"),
     SPEED_TEST("Speed Meter"),
     HEALER("Healer & Fixes"),
     ANALYTICS("Logs & Audit"),
-    SETTINGS("Settings")
+    COPILOT("AI Copilot")
 }
 
 sealed class UiEvent {
@@ -306,6 +330,7 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                 )
 
                 _uiState.update { current ->
+                    val resolved = recoveryResolution.justResolved
                     current.copy(
                         snapshot = effectiveSnapshot.copy(classification = finalClassification),
                         telephony = telSnapshot,
@@ -319,7 +344,20 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                         prediction = prediction,
                         pulseMindExplanation = explanation,
                         mlTelemetryCount = telemetryCount,
-                        lastCheckedTimestamp = System.currentTimeMillis()
+                        lastCheckedTimestamp = System.currentTimeMillis(),
+                        // isHealing tracks ANY pending recovery attempt, whichever screen
+                        // triggered it (Home's Fix It button or Advanced's manual healer),
+                        // so the Home hero always reflects real PulsePolicy/RecoveryOutcome
+                        // state rather than a per-screen flag that could drift out of sync.
+                        // Cleared the instant an attempt resolves (success or failure).
+                        isHealing = resolved == null && (current.isHealing || recoveryResolution.hasPending),
+                        healingOutcome = if (resolved != null) {
+                            HealingOutcome(
+                                succeeded = resolved.succeeded,
+                                durationMs = resolved.timeToRecoveryMs,
+                                message = resolved.postDiagnosis
+                            )
+                        } else current.healingOutcome
                     )
                 }
             }
@@ -343,6 +381,24 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
 
     fun setTab(tab: DashboardTab) {
         _uiState.update { it.copy(selectedTab = tab) }
+    }
+
+    fun setPrimaryTab(tab: PrimaryTab) {
+        _uiState.update { it.copy(selectedPrimaryTab = tab) }
+    }
+
+    /** The Home screen's single primary action. Dispatches PulsePolicy's currently recommended
+     *  action through the existing executeHealerAction path - the same real recovery mechanics
+     *  (and RecoveryOutcomeTracker attempt-recording) already used by the Advanced Healer tab.
+     *  No-op if PulsePolicy currently has nothing to recommend. */
+    fun fixIt(context: Context) {
+        val action = _uiState.value.policyDecision.recommendedAction ?: return
+        _uiState.update { it.copy(isHealing = true, healingOutcome = null) }
+        executeHealerAction(action, context)
+    }
+
+    fun dismissHealingOutcome() {
+        _uiState.update { it.copy(healingOutcome = null) }
     }
 
     fun setProbeMode(mode: DiagnosticMode) {

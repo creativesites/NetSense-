@@ -20,9 +20,11 @@ import androidx.compose.ui.Modifier
 import com.netsense.netpulse.analytics.DiagnosticExporter
 import com.netsense.netpulse.dataset.DatasetExportFormat
 import com.netsense.netpulse.dataset.DatasetExportService
+import com.netsense.netpulse.service.NetPulseSentinelService
 import com.netsense.netpulse.ui.NetPulseDashboard
 import com.netsense.netpulse.ui.NetPulseViewModel
 import com.netsense.netpulse.ui.OnboardingScreen
+import com.netsense.netpulse.ui.PrimaryTab
 import com.netsense.netpulse.ui.UiEvent
 import com.netsense.netpulse.ui.theme.NetPulseTheme
 
@@ -40,6 +42,14 @@ class MainActivity : ComponentActivity() {
                 val onboardingPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestMultiplePermissions()
                 ) { /* re-checked reactively wherever it's read */ }
+
+                // The Sentinel notification always taps through to Home (Section 18) - it
+                // already shows whatever state (healthy/degraded/down/recovering) prompted it.
+                LaunchedEffect(intent) {
+                    if (intent?.getBooleanExtra(NetPulseSentinelService.EXTRA_OPEN_HOME, false) == true) {
+                        viewModel.setPrimaryTab(PrimaryTab.HOME)
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     viewModel.uiEvents.collect { event ->
@@ -90,6 +100,9 @@ class MainActivity : ComponentActivity() {
                         uiState = uiState,
                         onRunProbe = { mode -> viewModel.runActiveProbe(mode) },
                         onSelectTab = { tab -> viewModel.setTab(tab) },
+                        onSelectPrimaryTab = { tab -> viewModel.setPrimaryTab(tab) },
+                        onFixIt = { viewModel.fixIt(this@MainActivity) },
+                        onDismissHealingOutcome = { viewModel.dismissHealingOutcome() },
                         onSelectMode = { mode -> viewModel.setProbeMode(mode) },
                         onToggleSentinel = { viewModel.toggleSentinelService(this@MainActivity) },
                         onStartSpeedTest = { viewModel.startSpeedTest() },

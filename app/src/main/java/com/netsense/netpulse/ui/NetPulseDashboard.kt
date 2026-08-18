@@ -73,6 +73,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -150,6 +153,9 @@ fun NetPulseDashboard(
     uiState: DashboardUiState,
     onRunProbe: (DiagnosticMode) -> Unit,
     onSelectTab: (DashboardTab) -> Unit,
+    onSelectPrimaryTab: (PrimaryTab) -> Unit = {},
+    onFixIt: () -> Unit = {},
+    onDismissHealingOutcome: () -> Unit = {},
     onSelectMode: (DiagnosticMode) -> Unit,
     onToggleSentinel: () -> Unit = {},
     onStartSpeedTest: () -> Unit = {},
@@ -263,41 +269,51 @@ fun NetPulseDashboard(
                                 fontWeight = FontWeight.Bold,
                                 color = NetPulseTextPrimary
                             )
-                            Text(
-                                text = if (uiState.activeSimulationScenario != SimulatedFaultScenario.NONE)
-                                    "Simulation: ${uiState.activeSimulationScenario.simulatedRating}"
-                                else "AI & RF Diagnostics Suite",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (uiState.activeSimulationScenario != SimulatedFaultScenario.NONE)
-                                    StatusZombie else NetPulseTextTertiary
-                            )
+                            if (uiState.activeSimulationScenario != SimulatedFaultScenario.NONE) {
+                                Text(
+                                    text = "Simulation: ${uiState.activeSimulationScenario.simulatedRating}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = StatusZombie
+                                )
+                            }
                         }
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { onRunProbe(uiState.selectedMode) },
-                        enabled = !uiState.isProbing,
-                        modifier = Modifier.testTag("refresh_probe_button")
-                    ) {
-                        if (uiState.isProbing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = NetPulseAccent
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Run Probe",
-                                tint = NetPulseTextPrimary
-                            )
+                    // The manual refresh/probe action is engineering-facing (Section 6: the
+                    // primary Home action is Fix, not Run Diagnostics) - only show it once the
+                    // user has actually navigated into Advanced, where a manual probe is useful.
+                    if (uiState.selectedPrimaryTab == PrimaryTab.ADVANCED) {
+                        IconButton(
+                            onClick = { onRunProbe(uiState.selectedMode) },
+                            enabled = !uiState.isProbing,
+                            modifier = Modifier.testTag("refresh_probe_button")
+                        ) {
+                            if (uiState.isProbing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = NetPulseAccent
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Run Probe",
+                                    tint = NetPulseTextPrimary
+                                )
+                            }
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = NetPulseSurface
                 )
+            )
+        },
+        bottomBar = {
+            NetPulseBottomNavigation(
+                selected = uiState.selectedPrimaryTab,
+                onSelect = onSelectPrimaryTab
             )
         }
     ) { paddingValues ->
@@ -306,81 +322,55 @@ fun NetPulseDashboard(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Modern Minimalist Horizontally Scrollable Segmented Tab Navigation
-            MinimalistScrollableTabNavigation(
-                selectedTab = uiState.selectedTab,
-                onSelectTab = onSelectTab
-            )
-
-            HorizontalDivider(color = NetPulseBorder, thickness = 1.dp)
-
-            // Main Content Area based on Tab
-            when (uiState.selectedTab) {
-                DashboardTab.DASHBOARD -> {
-                    OverviewTabContent(
+            when (uiState.selectedPrimaryTab) {
+                PrimaryTab.HOME -> {
+                    HomeScreen(
                         uiState = uiState,
                         hasLocationPermission = hasLocationPermission,
                         isLocationServicesEnabled = isLocationServicesEnabled,
                         onRequestPermissions = requestLocationPermission,
                         onOpenLocationSettings = openLocationSettings,
-                        onRunProbe = { onRunProbe(uiState.selectedMode) },
-                        onNavigateToDiagnostics = { onSelectTab(DashboardTab.DIAGNOSTICS) },
-                        onNavigateToTroubleshoot = { onSelectTab(DashboardTab.HEALER) },
-                        onToggleSentinel = onToggleSentinel,
-                        onRunBenchmark = onRunBenchmark,
-                        onConsultAi = onConsultAi,
-                        onClearAiConsultation = onClearAiConsultation,
-                        onSelectMode = onSelectMode,
-                        context = context
+                        onFixIt = onFixIt,
+                        onDismissHealingOutcome = onDismissHealingOutcome,
+                        onNavigateToAdvanced = { onSelectPrimaryTab(PrimaryTab.ADVANCED) },
+                        onNavigateToHistory = { onSelectPrimaryTab(PrimaryTab.HISTORY) }
                     )
                 }
-                DashboardTab.DIAGNOSTICS -> {
-                    DiagnosticsTabContent(
+                PrimaryTab.HISTORY -> {
+                    HistoryScreen(
                         uiState = uiState,
-                        onSelectMode = onSelectMode,
+                        onNavigateToAdvanced = { onSelectPrimaryTab(PrimaryTab.ADVANCED) }
+                    )
+                }
+                PrimaryTab.ADVANCED -> {
+                    AdvancedScreen(
+                        uiState = uiState,
+                        onSelectTab = onSelectTab,
                         onRunProbe = onRunProbe,
-                        onRunPingMatrix = onRunPingMatrix,
-                        onRunDualStackCheck = onRunDualStackCheck,
-                        onRunHopTrace = onRunHopTrace,
-                        onSelectCategoryFilter = onSelectCategoryFilter
-                    )
-                }
-                DashboardTab.RADAR -> {
-                    RadarTabContent(
-                        uiState = uiState,
-                        onRequestLocationPermission = requestLocationPermission,
-                        onOpenLocationSettings = openLocationSettings
-                    )
-                }
-                DashboardTab.SPEED_TEST -> {
-                    SpeedTestTabContent(
-                        speedState = uiState.speedTestState,
-                        isTesting = uiState.isSpeedTesting,
-                        onStartTest = onStartSpeedTest,
-                        onCancelTest = onCancelSpeedTest
-                    )
-                }
-                DashboardTab.HEALER -> {
-                    HealerTabContent(
-                        uiState = uiState,
-                        onExecuteAction = onExecuteHealerAction,
-                        onSelectScenario = onSelectSimulation,
-                        onRunProbe = { onRunProbe(uiState.selectedMode) },
-                        context = context
-                    )
-                }
-                DashboardTab.ANALYTICS -> {
-                    AnalyticsLogsTabContent(
-                        uiState = uiState,
+                        onSelectMode = onSelectMode,
+                        onStartSpeedTest = onStartSpeedTest,
+                        onCancelSpeedTest = onCancelSpeedTest,
+                        onSelectSimulation = onSelectSimulation,
                         onExportCsv = onExportCsv,
                         onExportMlDataset = onExportMlDataset,
                         onClearHistory = onClearHistory,
                         onDeleteLog = onDeleteLog,
-                        onGenerateReport = onGenerateIncidentReport,
-                        onShareReport = onShareIncidentReport
+                        onRunPingMatrix = onRunPingMatrix,
+                        onRunDualStackCheck = onRunDualStackCheck,
+                        onRunHopTrace = onRunHopTrace,
+                        onSelectCategoryFilter = onSelectCategoryFilter,
+                        onExecuteHealerAction = onExecuteHealerAction,
+                        onGenerateIncidentReport = onGenerateIncidentReport,
+                        onShareIncidentReport = onShareIncidentReport,
+                        onRunBenchmark = onRunBenchmark,
+                        onConsultAi = onConsultAi,
+                        onClearAiConsultation = onClearAiConsultation,
+                        onRequestLocationPermission = requestLocationPermission,
+                        onOpenLocationSettings = openLocationSettings,
+                        context = context
                     )
                 }
-                DashboardTab.SETTINGS -> {
+                PrimaryTab.SETTINGS -> {
                     SettingsTabContent(
                         appSettings = uiState.appSettings,
                         isSentinelRunning = uiState.isSentinelRunning,
@@ -393,6 +383,45 @@ fun NetPulseDashboard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun NetPulseBottomNavigation(
+    selected: PrimaryTab,
+    onSelect: (PrimaryTab) -> Unit
+) {
+    val icons = mapOf(
+        PrimaryTab.HOME to Icons.Default.NetworkCheck,
+        PrimaryTab.HISTORY to Icons.Default.ClearAll,
+        PrimaryTab.ADVANCED to Icons.Default.Science,
+        PrimaryTab.SETTINGS to Icons.Default.Settings
+    )
+    NavigationBar(
+        containerColor = NetPulseSurface,
+        modifier = Modifier.testTag("primary_bottom_nav")
+    ) {
+        PrimaryTab.values().forEach { tab ->
+            NavigationBarItem(
+                selected = selected == tab,
+                onClick = { onSelect(tab) },
+                icon = {
+                    Icon(
+                        imageVector = icons.getValue(tab),
+                        contentDescription = tab.label
+                    )
+                },
+                label = { Text(tab.label, fontSize = 11.sp) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = NetPulseAccent,
+                    selectedTextColor = NetPulseAccent,
+                    unselectedIconColor = NetPulseTextTertiary,
+                    unselectedTextColor = NetPulseTextTertiary,
+                    indicatorColor = NetPulseAccentContainer
+                ),
+                modifier = Modifier.testTag("primary_tab_${tab.name.lowercase()}")
+            )
         }
     }
 }

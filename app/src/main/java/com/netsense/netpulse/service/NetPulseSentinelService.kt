@@ -16,9 +16,14 @@ import com.netsense.netpulse.data.DiagnosticLogEntity
 import com.netsense.netpulse.data.NetPulseDatabase
 import com.netsense.netpulse.engine.DiagnosticEngine
 import com.netsense.netpulse.engine.UsabilityEngine
+import com.netsense.netpulse.model.CellularRfSnapshot
+import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.DiagnosticMode
 import com.netsense.netpulse.model.NetworkSnapshot
+import com.netsense.netpulse.model.ProductStatus
+import com.netsense.netpulse.model.ProductStatusMapper
 import com.netsense.netpulse.model.UsabilityRating
+import com.netsense.netpulse.model.WifiRadarSnapshot
 import com.netsense.netpulse.telephony.TelephonyObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +50,8 @@ class NetPulseSentinelService : Service() {
     private lateinit var database: NetPulseDatabase
 
     private var lastObservedZombie = false
+    private var lastNotifiedTitle: String? = null
+    private var lastNotifiedText: String? = null
 
     companion object {
         const val CHANNEL_ID = "netpulse_sentinel_channel"
@@ -54,6 +61,11 @@ class NetPulseSentinelService : Service() {
 
         const val ACTION_START = "ACTION_START_SENTINEL"
         const val ACTION_STOP = "ACTION_STOP_SENTINEL"
+
+        /** Set on the notification's tap intent so MainActivity opens straight to Home -
+         *  the one screen that already shows whatever state (healthy/degraded/down/
+         *  recovering) prompted the notification, without needing per-state deep links. */
+        const val EXTRA_OPEN_HOME = "open_home"
 
         fun startService(context: Context) {
             val intent = Intent(context, NetPulseSentinelService::class.java).apply {
@@ -90,7 +102,7 @@ class NetPulseSentinelService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                startForeground(NOTIFICATION_ID, buildOngoingNotification("NetPulse Sentinel Active", "Monitoring connection stability..."))
+                startForeground(NOTIFICATION_ID, buildOngoingNotification("Checking your connection", "NetPulse just started monitoring"))
                 startSentinelLoop()
             }
         }
@@ -123,10 +135,36 @@ class NetPulseSentinelService : Service() {
                     val scoreResult = UsabilityEngine.calculateScore(enrichedSnapshot, probe)
                     val classification = UsabilityEngine.classify(enrichedSnapshot, scoreResult)
 
-                    // Update persistent notification status
-                    val notifTitle = "NetPulse: ${scoreResult.rating.label} (${scoreResult.score}/100)"
-                    val notifText = "${enrichedSnapshot.primaryTransport.name} • ${enrichedSnapshot.carrierName ?: "Network"} • Latency: ${probe.averageHttpMs ?: probe.averageDnsMs ?: 0}ms"
-                    updateOngoingNotification(notifTitle, notifText)
+                    // A recovery attempt may currently be in progress from the foreground app
+                    // (Home's Fix It, or a manual Advanced Healer action) - reuse the same
+                    // RecoveryOutcomeDao truth the ViewModel does so the notification never
+                    // disagrees with what Home is showing.
+                    val isRecoveryPending = database.recoveryOutcomeDao().getPending().isNotEmpty()
+                    val status = ProductStatusMapper.map(
+                        snapshot = enrichedSnapshot,
+                        scoreResult = scoreResult,
+                        classification = classification,
+                        wifiRadar = WifiRadarSnapshot(),
+                        cellularRf = CellularRfSnapshot(),
+                        isProbing = false,
+                        isRecoveryPending = isRecoveryPending
+                    )
+                    val presentation = ConnectionPresentationMapper.map(status, enrichedSnapshot, scoreResult)
+
+                    // Human-readable status only (Section 17) - never raw metrics like
+                    // "RSRP -87 | TCP 268ms". The subtitle adds carrier/network context when
+                    // healthy, or points at the app for more detail when something's wrong.
+                    val notifTitle = presentation.statusLine
+                    val notifText = if (status == ProductStatus.ONLINE) {
+                        listOfNotNull(enrichedSnapshot.carrierName, enrichedSnapshot.cellularDataNetworkType)
+                            .joinToString(" · ")
+                            .ifBlank { "NetPulse is monitoring your connection" }
+                    } else if (isRecoveryPending) {
+                        "NetPulse is working on it"
+                    } else {
+                        "Tap to see what happened"
+                    }
+                    updateOngoingNotification(notifTitle, notifText, openHome = status != ProductStatus.ONLINE)
 
                     // Persist record into Room Database
                     val log = DiagnosticLogEntity(
@@ -159,7 +197,7 @@ class NetPulseSentinelService : Service() {
 
                     // Trigger instant high-priority alert on transition to Zombie state
                     if (scoreResult.isZombieConnection && !lastObservedZombie) {
-                        triggerZombieAlert(scoreResult.primaryDiagnosis)
+                        triggerZombieAlert(presentation.supportingText)
                     }
                     lastObservedZombie = scoreResult.isZombieConnection
 
@@ -200,11 +238,14 @@ class NetPulseSentinelService : Service() {
         }
     }
 
-    private fun buildOngoingNotification(title: String, message: String): Notification {
+    private fun buildOngoingNotification(title: String, message: String, openHome: Boolean = false): Notification {
+        val activityIntent = Intent(this, MainActivity::class.java).apply {
+            if (openHome) putExtra(EXTRA_OPEN_HOME, true)
+        }
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            activityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -218,21 +259,30 @@ class NetPulseSentinelService : Service() {
             .build()
     }
 
-    private fun updateOngoingNotification(title: String, message: String) {
+    /** Skips re-posting when nothing user-visible actually changed, so the notification
+     *  doesn't churn every 45s while the connection is quietly healthy (Section 17: "do not
+     *  create notification spam"). */
+    private fun updateOngoingNotification(title: String, message: String, openHome: Boolean = false) {
+        if (title == lastNotifiedTitle && message == lastNotifiedText) return
+        lastNotifiedTitle = title
+        lastNotifiedText = message
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildOngoingNotification(title, message))
+        manager.notify(NOTIFICATION_ID, buildOngoingNotification(title, message, openHome))
     }
 
     private fun triggerZombieAlert(message: String) {
+        val activityIntent = Intent(this, MainActivity::class.java).apply {
+            putExtra(EXTRA_OPEN_HOME, true)
+        }
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            activityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val alert = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
-            .setContentTitle("⚠ Zombie Connection Detected!")
+            .setContentTitle("No Internet")
             .setContentText(message)
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setContentIntent(pendingIntent)
