@@ -1,20 +1,33 @@
 # ml/data/
 
-Place a real NetPulse dataset export here (never fabricated data).
+Real NetPulse dataset exports live here (never fabricated data).
 
-## How to get a real export
+```
+data/
+  raw_exports/     <- every export, as received, permanently, one file per upload
+                       (see raw_exports/README.md for the naming convention)
+  export.jsonl     <- optional: a copy/symlink of the current "working" file, if you
+                       want scripts/*.py --input to point at a stable name instead of
+                       repeating the timestamped filename every time
+```
 
-1. Run the NetPulse Android app on a device (or emulator with real network conditions)
-   long enough to accumulate telemetry across multiple sessions, transports, and (ideally)
-   some real degradation/dropout events.
-2. In the app: **Settings/Analytics tab → "Export ML Training Dataset (JSONL)"**
+## How to send a new export
+
+1. Run the NetPulse Android app long enough to accumulate telemetry across multiple
+   sessions, transports, and (ideally) some real degradation/dropout events.
+2. In the app: **Analytics tab → "Export ML Training Dataset (JSONL)"**
    (`NetPulseViewModel.exportMlDataset`, `DatasetExportService`). This exports only the
-   PRODUCTION (non-synthetic) dataset - see `com.netsense.netpulse.dataset.DatasetExportService`.
-3. Pull the shared file off the device and place it here, e.g. `ml/data/export_2026xxxx.jsonl`.
-4. Point the scripts at it:
+   PRODUCTION (non-synthetic) dataset.
+3. **Attach the exported file directly to a message in this conversation** (the same way
+   you'd send any file to Claude - drag-and-drop or the attach button). There's no
+   filesystem path on your phone/computer that reaches this repository directly; the
+   attachment is how a file actually gets here. Once attached, it gets saved into
+   `data/raw_exports/` with a clear name and you don't need to do anything else.
+4. Point the scripts at whichever file(s) matter:
    ```bash
-   python scripts/validate_dataset.py --input data/export_2026xxxx.jsonl
-   python scripts/inspect_dataset.py --input data/export_2026xxxx.jsonl --report reports/dataset_inspection.md
+   python scripts/validate_dataset.py --input data/raw_exports/<file>.jsonl
+   python scripts/inspect_dataset.py --input data/raw_exports/<file>.jsonl \
+       --report reports/dataset_inspection.md
    ```
 
 ## What NOT to put here
