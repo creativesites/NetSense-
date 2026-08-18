@@ -1,9 +1,72 @@
 # NetPulse PulsePredictor - Data Collection Status
 
-**Status: NOT READY. No real telemetry dataset exists yet.**
+**Status: NOT READY (progress: first real export received and validated 2026-08-18).**
 
-This is not a placeholder result - it is the honest, correct outcome of Phase 1 of the
-Model Lab. This document exists so that fact is never lost or quietly assumed away later.
+This is not a placeholder result - it is the honest, current state of data collection.
+This document exists so that fact is never lost or quietly assumed away later.
+
+## Progress log
+
+### 2026-08-18 - first real export (`data/raw_exports/20260818_0921_s20-airtel-zm_001.jsonl`)
+
+1,729 real observations from a Samsung S20 on Airtel Zambia, ~35 minutes of collection,
+21 distinct sessions. Ran `validate_dataset.py` (PASSED - schema, leakage, and structural
+checks all clean) and `inspect_dataset.py` for the first time against real data. Actual
+numbers vs. the collection target below:
+
+| Target | Minimum | Actual (this export) | Met? |
+|---|---|---|---|
+| Distinct sessions | >= 30 | 21 | Not yet |
+| RESOLVED `dropout30s` positives, >= 10 sessions | >= 30 across >= 10 sessions | 71 positives, but only **6 sessions** | Count yes, diversity no |
+| RESOLVED `degradation15s` positives | >= 50 | 23 | Not yet |
+| Wi-Fi represented (>= 5 sessions) | required | **0 sessions** (100% CELLULAR, some NONE) | Not met |
+| Distinct networks (`networkIdHash`) | >= 3 | 3 (1680 / 34 / 15 obs - heavily dominated by one) | Technically yes, badly skewed |
+| Time span | >= 2 weeks | ~35 minutes, one sitting | Not met |
+
+Two things this export makes clear beyond the raw counts:
+
+- **Almost no negative examples exist.** `dropout30s` resolved 71 positive vs. **1**
+  negative; `degradation15s` resolved 23 positive vs. 6 negative. This collection window
+  captured a real incident (matches the zombie episode seen in the earlier
+  `diagnostic_logs` export), which is exactly the kind of signal we want, but a model
+  needs comparable coverage of "stayed healthy" stretches too, or it will learn to
+  always predict failure. **Collecting some boring, uneventful sessions is now just as
+  valuable as capturing more incidents.**
+- **71 dropout positives came from only 6 sessions, and 29 of those from one single
+  session.** `MIN_SESSIONS_FOR_HOLDOUT_SPLIT = 10` in `src/splitting.py` means a held-out
+  split isn't even attemptable yet on `dropout30s` alone from this file (need
+  `train_baselines.py`/`train_cnn.py` to see >= 10 sessions with a resolved label, and we
+  have 6). More sessions, not more rows within the same few sessions, is the actual
+  bottleneck.
+
+**Two genuine findings, not yet acted on (holding for your call, per "be conservative"):**
+
+1. **`rsrpDbm` / `sinrDb` / `cqi` are null in all 1,729 rows** - 3 of the 12 model
+   features are 100% missing in this export. `RadarEngine.getCellularRfSnapshot()` only
+   populates these from a registered `CellInfoLte`/`CellInfoNr` reading
+   (`isRfDataMeasured`), which typically requires `ACCESS_FINE_LOCATION` to be granted at
+   runtime (a coarse/foreground grant may not be enough for detailed cell info on some
+   OEM builds). **Worth checking Android Settings -> Apps -> NetPulse -> Permissions ->
+   Location on the S20** - if it's "Denied" or "Only this app - never", that would fully
+   explain this. This is the single highest-leverage thing to fix before collecting more
+   data, since it's silently costing 3 of 12 features on every single observation.
+2. **DNS/TCP/HTTP/packet-loss features are "sticky", not independently sampled per
+   observation.** They come from `NetPulseViewModel._uiState.value.probeResult` - the
+   result of the last explicit `runActiveProbe()` call (init, a manual "Run Diagnostics"
+   tap, or the socket-flush healer action) - reused across every ~1-second telemetry tick
+   until the next probe runs. That's why `tcpRttMs` showed up as a "constant" flag in the
+   inspector: 22 consecutive rows all reading exactly 268.0ms is one real probe result
+   getting stamped across ~35 seconds of ticks, not a bug in the probe itself. This isn't
+   necessarily wrong, but it does mean a 15-step window's "15 timesteps" often contain
+   far fewer than 15 independent probe-layer measurements - worth keeping in mind for
+   later feature/architecture decisions, not something to fix now.
+
+**Good news, confirmed for the first time with real numbers:** the cadence concern raised
+after the (wrong-table) `diagnostic_logs` export does NOT apply to the real ML table.
+Median inter-observation interval here is **1.09 seconds** (not ~58s), so a
+`WINDOW_SIZE=15` sequence spans **~15.3 seconds** of wall clock time - very close to the
+original design assumption. `ml_telemetry_observations` is fed by the ViewModel's live
+connectivity/telephony flow, not the slow Sentinel loop, and that's exactly what we see.
 
 ## What was checked
 
