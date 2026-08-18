@@ -90,7 +90,7 @@ data class DashboardUiState(
     val probeResult: DiagnosticProbeResult? = null,
     val selectedMode: DiagnosticMode = DiagnosticMode.STANDARD,
     val selectedPrimaryTab: PrimaryTab = PrimaryTab.HOME,
-    val selectedTab: DashboardTab = DashboardTab.DIAGNOSTICS,
+    val selectedTab: DashboardTab = DashboardTab.OVERVIEW,
     val scoreResult: UsabilityScoreResult = UsabilityScoreResult(
         score = 0,
         rating = UsabilityRating.UNUSABLE,
@@ -174,8 +174,11 @@ enum class PrimaryTab(val label: String) {
 }
 
 /** Sub-navigation inside the Advanced tab - the same engineering screens that used to be
- *  top-level tabs, now nested one level deeper behind the consumer Home experience. */
+ *  top-level tabs, now nested one level deeper behind the consumer Home experience. OVERVIEW
+ *  is the original detailed dashboard page, kept intact for users who want the full technical
+ *  picture in one place instead of the simplified consumer Home screen. */
 enum class DashboardTab(val label: String) {
+    OVERVIEW("Overview"),
     DIAGNOSTICS("Diagnostics"),
     RADAR("RF & Radar"),
     SPEED_TEST("Speed Meter"),

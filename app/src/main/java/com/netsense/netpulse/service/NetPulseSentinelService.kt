@@ -7,9 +7,15 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.netsense.netpulse.MainActivity
 import com.netsense.netpulse.connectivity.ConnectivityMonitor
 import com.netsense.netpulse.data.DiagnosticLogEntity
@@ -54,7 +60,11 @@ class NetPulseSentinelService : Service() {
     private var lastNotifiedText: String? = null
 
     companion object {
-        const val CHANNEL_ID = "netpulse_sentinel_channel"
+        // _v2: a NotificationChannel's importance is frozen by Android the moment it's first
+        // created and can only be changed by the user afterwards, never by the app re-creating
+        // it - bumping to DEFAULT (see createNotificationChannels) needs a fresh channel id to
+        // actually take effect on devices that already have the old LOW-importance channel.
+        const val CHANNEL_ID = "netpulse_sentinel_channel_v2"
         const val ALERT_CHANNEL_ID = "netpulse_zombie_alert_channel"
         const val NOTIFICATION_ID = 1001
         const val ZOMBIE_ALERT_NOTIFICATION_ID = 1002
@@ -102,7 +112,7 @@ class NetPulseSentinelService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                startForeground(NOTIFICATION_ID, buildOngoingNotification("Checking your connection", "NetPulse just started monitoring"))
+                startForeground(NOTIFICATION_ID, buildOngoingNotification(null, "Checking your connection", "NetPulse just started monitoring"))
                 startSentinelLoop()
             }
         }
@@ -151,20 +161,21 @@ class NetPulseSentinelService : Service() {
                     )
                     val presentation = ConnectionPresentationMapper.map(status, enrichedSnapshot, scoreResult)
 
-                    // Human-readable status only (Section 17) - never raw metrics like
-                    // "RSRP -87 | TCP 268ms". The subtitle adds carrier/network context when
-                    // healthy, or points at the app for more detail when something's wrong.
-                    val notifTitle = presentation.statusLine
+                    // The score number is the whole point of this notification - it's what
+                    // lets a user judge "how good" at a glance instead of just "good or bad".
+                    // The subtitle carries the same informative diagnosis PulseCore already
+                    // computed (unchanged from what used to show here), not a vaguer rewrite.
+                    val notifTitle = "${scoreResult.score}/100 · ${scoreResult.rating.label}"
                     val notifText = if (status == ProductStatus.ONLINE) {
                         listOfNotNull(enrichedSnapshot.carrierName, enrichedSnapshot.cellularDataNetworkType)
                             .joinToString(" · ")
                             .ifBlank { "NetPulse is monitoring your connection" }
                     } else if (isRecoveryPending) {
-                        "NetPulse is working on it"
+                        "NetPulse is working on it - ${scoreResult.primaryDiagnosis}"
                     } else {
-                        "Tap to see what happened"
+                        scoreResult.primaryDiagnosis
                     }
-                    updateOngoingNotification(notifTitle, notifText, openHome = status != ProductStatus.ONLINE)
+                    updateOngoingNotification(scoreResult.score, notifTitle, notifText, openHome = status != ProductStatus.ONLINE)
 
                     // Persist record into Room Database
                     val log = DiagnosticLogEntity(
@@ -197,7 +208,7 @@ class NetPulseSentinelService : Service() {
 
                     // Trigger instant high-priority alert on transition to Zombie state
                     if (scoreResult.isZombieConnection && !lastObservedZombie) {
-                        triggerZombieAlert(presentation.supportingText)
+                        triggerZombieAlert(scoreResult.score, presentation.supportingText)
                     }
                     lastObservedZombie = scoreResult.isZombieConnection
 
@@ -215,13 +226,19 @@ class NetPulseSentinelService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
 
+            // DEFAULT (not LOW) so this doesn't get collapsed into the OEM "silent"/minimized
+            // notification group (e.g. Samsung One UI) - this is the always-visible connection
+            // status the user asked to always be able to see, so it needs to stay in the main
+            // notification list. No sound/vibration either way since setOngoing notifications
+            // never alert on update, only on first post.
             val ongoingChannel = NotificationChannel(
                 CHANNEL_ID,
-                "NetPulse Sentinel Status",
-                NotificationManager.IMPORTANCE_LOW
+                "NetPulse Connection Status",
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Shows real-time connection usability status"
+                description = "Always-on Internet health score, shown as the status bar icon"
                 setShowBadge(false)
+                setSound(null, null)
             }
 
             val alertChannel = NotificationChannel(
@@ -238,7 +255,7 @@ class NetPulseSentinelService : Service() {
         }
     }
 
-    private fun buildOngoingNotification(title: String, message: String, openHome: Boolean = false): Notification {
+    private fun buildOngoingNotification(score: Int?, title: String, message: String, openHome: Boolean = false): Notification {
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             if (openHome) putExtra(EXTRA_OPEN_HOME, true)
         }
@@ -252,25 +269,25 @@ class NetPulseSentinelService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setSmallIcon(scoreStatusBarIcon(score))
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
     /** Skips re-posting when nothing user-visible actually changed, so the notification
      *  doesn't churn every 45s while the connection is quietly healthy (Section 17: "do not
      *  create notification spam"). */
-    private fun updateOngoingNotification(title: String, message: String, openHome: Boolean = false) {
+    private fun updateOngoingNotification(score: Int, title: String, message: String, openHome: Boolean = false) {
         if (title == lastNotifiedTitle && message == lastNotifiedText) return
         lastNotifiedTitle = title
         lastNotifiedText = message
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildOngoingNotification(title, message, openHome))
+        manager.notify(NOTIFICATION_ID, buildOngoingNotification(score, title, message, openHome))
     }
 
-    private fun triggerZombieAlert(message: String) {
+    private fun triggerZombieAlert(score: Int, message: String) {
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             putExtra(EXTRA_OPEN_HOME, true)
         }
@@ -282,9 +299,9 @@ class NetPulseSentinelService : Service() {
         )
 
         val alert = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
-            .setContentTitle("No Internet")
+            .setContentTitle("No Internet · $score/100")
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setSmallIcon(scoreStatusBarIcon(score))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -292,5 +309,34 @@ class NetPulseSentinelService : Service() {
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(ZOMBIE_ALERT_NOTIFICATION_ID, alert)
+    }
+
+    /**
+     * Draws the usability score directly onto the small icon, so the number is visible in the
+     * status bar itself without pulling down the shade - the same technique battery/signal
+     * meter apps use (a plain first-party Notification.setSmallIcon call, not a hack). Status
+     * bar icons are rendered as a system-tinted silhouette from the alpha channel, so this
+     * draws solid white text on a transparent background; the system colors it appropriately
+     * for light/dark status bars on its own. Null (startup, before the first probe) draws a
+     * neutral "···" rather than a misleading "0".
+     */
+    private fun scoreStatusBarIcon(score: Int?): IconCompat {
+        val size = 96
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val label = score?.toString() ?: "···"
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            textSize = when {
+                score == null -> size * 0.30f
+                score >= 100 -> size * 0.40f
+                else -> size * 0.52f
+            }
+        }
+        val yPos = (size / 2f) - ((paint.descent() + paint.ascent()) / 2f)
+        canvas.drawText(label, size / 2f, yPos, paint)
+        return IconCompat.createWithBitmap(bitmap)
     }
 }

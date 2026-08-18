@@ -365,6 +365,9 @@ fun NetPulseDashboard(
                         onRunBenchmark = onRunBenchmark,
                         onConsultAi = onConsultAi,
                         onClearAiConsultation = onClearAiConsultation,
+                        onToggleSentinel = onToggleSentinel,
+                        hasLocationPermission = hasLocationPermission,
+                        isLocationServicesEnabled = isLocationServicesEnabled,
                         onRequestLocationPermission = requestLocationPermission,
                         onOpenLocationSettings = openLocationSettings,
                         context = context

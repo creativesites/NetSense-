@@ -37,7 +37,7 @@ class NavigationTest {
         composeTestRule.setContent {
             NetPulseTheme {
                 var primaryTab by remember { mutableStateOf(PrimaryTab.HOME) }
-                var tab by remember { mutableStateOf(DashboardTab.DIAGNOSTICS) }
+                var tab by remember { mutableStateOf(DashboardTab.OVERVIEW) }
                 NetPulseDashboard(
                     uiState = DashboardUiState(selectedPrimaryTab = primaryTab, selectedTab = tab),
                     onRunProbe = {},
@@ -73,6 +73,7 @@ class NavigationTest {
 
         composeTestRule.onNodeWithTag("primary_tab_advanced").performClick()
 
+        composeTestRule.onNodeWithTag("tab_overview").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_diagnostics").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_radar").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_speed_test").assertIsDisplayed()
