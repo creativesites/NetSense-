@@ -1,11 +1,71 @@
 # NetPulse PulsePredictor - Data Collection Status
 
-**Status: NOT READY (progress: first real export received and validated 2026-08-18).**
+**Status: NOT READY. Collection ongoing; offline model-lab work paused by design (see
+"Direction" below) - not because the data is unusable, but because the plan is now
+on-device learning, which this repo hasn't built yet.**
 
 This is not a placeholder result - it is the honest, current state of data collection.
 This document exists so that fact is never lost or quietly assumed away later.
 
+## Direction (2026-08-18)
+
+Decision: pause active offline model experimentation (Python `ml/` lab) for now. Data
+collection continues - multiple devices, ongoing - and gets dropped into
+`data/raw_exports/` as it arrives. The plan for actually training PulsePredictor has
+shifted from "train offline in `ml/`, convert to TFLite, ship a frozen model" toward
+**on-device learning**: the model adapts using telemetry the phone itself collects,
+rather than being trained once centrally and shipped static. That's a different
+architecture from anything built so far in `ml/` (which assumes a offline
+train/validate/test split producing one exported artifact) and is intentionally **not**
+designed or implemented yet - it's a future phase, not a checkbox to hurry through here.
+
+Until that phase starts, `ml/` stays exactly as-is: a working, tested harness
+(`validate_dataset.py`, `inspect_dataset.py`, `merge_raw_exports.py`, the baseline/CNN
+code, the leakage audit) that's ready to be picked back up, either to resume the
+offline-training path or to inform the on-device design (e.g. reusing `LabelSemantics`,
+`PulseFeatureSchema`, and the splitting/evaluation code, which are architecture-agnostic).
+Nothing here needs to be redone when that phase starts - it needs to be extended.
+
 ## Progress log
+
+### 2026-08-18 - second real export merged (`data/raw_exports/20260818_1117_s20-airtel-zm_002.jsonl`)
+
+A second export arrived ~2 hours after the first, same device. **Finding:**
+`DatasetExportService.getProductionObservations()` exports the app's entire accumulated
+history every time, not a delta - the first export's 1,729 rows turned out to be an exact
+subset of the second export's 3,850 (same `sessionId`+`timestamp` pairs, later-resolved
+labels). Naively concatenating the two would have double-counted every row. Added
+`scripts/merge_raw_exports.py` to deduplicate on `(sessionId, timestamp)`, keeping the
+later (at-least-as-resolved) copy of any row that appears in more than one export -
+tested in `tests/test_merge_raw_exports.py`. **Anyone merging multiple raw exports must
+use this script, not `cat`.**
+
+Combined real numbers now (`data/merged.jsonl`, still just one physical device):
+
+| Target | Minimum | Actual (merged) | Met? |
+|---|---|---|---|
+| Distinct sessions | >= 30 | 47 | **Met** |
+| RESOLVED `dropout30s` positives, >= 10 sessions | >= 30 across >= 10 sessions | 192 positives across **13 sessions** | **Met** |
+| RESOLVED `degradation15s` positives | >= 50 | 23 | Not yet |
+| Wi-Fi represented (>= 5 sessions) | required | 20 observations, still 0 confirmed Wi-Fi sessions of size >=1 in this cut | Not met |
+| Distinct networks (`networkIdHash`) | >= 3 | 4 (one still dominates: 3727/52/51/20) | **Met**, still skewed |
+| Time span | >= 2 weeks | ~4 hours total, one device, one day | Not met |
+
+Real progress on session count and dropout-positive diversity. Two things unchanged from
+the first export, now confirmed persistent rather than a fluke:
+
+- `rsrpDbm`/`sinrDb`/`cqi` are still null in all 3,850 rows (both exports). Still
+  unactioned pending the location-permission check on the collecting device (see the
+  2026-08-18 first-export entry below) - now a stronger signal that it's a real,
+  standing gap rather than a one-off.
+- `tcpRttMs` is still a 268.0ms constant wherever non-null (99.43% missing). Plausible
+  as "one real probe's result reused across many ticks" per the earlier finding, but the
+  *exact same* 268ms value recurring identically hours apart, across a fresh app
+  session, is a mild coincidence worth a second look eventually - not urgent, not
+  investigated further here.
+
+Since offline training is paused (see "Direction" above), these are recorded for whoever
+picks this back up, not acted on now.
 
 ### 2026-08-18 - first real export (`data/raw_exports/20260818_0921_s20-airtel-zm_001.jsonl`)
 
