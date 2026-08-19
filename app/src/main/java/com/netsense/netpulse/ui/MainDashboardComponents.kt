@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -49,9 +51,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.TipsAndUpdates
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -803,6 +808,55 @@ fun RunDiagnosticsActionCard(
     }
 }
 
+/**
+ * One labeled section of a structured Copilot answer (WHAT'S HAPPENING / WHY / WHAT I
+ * RECOMMEND) - a colored left rule and small icon give each question its own visual identity
+ * instead of the whole answer reading as one undifferentiated block of text.
+ */
+@Composable
+private fun CopilotAnswerSection(
+    label: String,
+    icon: ImageVector,
+    accentColor: Color,
+    body: String
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .padding(vertical = 2.dp)
+                .background(accentColor, RoundedCornerShape(2.dp))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accentColor,
+                    letterSpacing = 0.6.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = NetPulseTextPrimary,
+                lineHeight = 20.sp
+            )
+        }
+    }
+}
+
 // =============================================================================
 // 4. AI FEATURES FOR DASHBOARD (Gemini AI Network Copilot & Smart Assistant)
 // =============================================================================
@@ -832,8 +886,10 @@ fun AiDashboardCopilotCard(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
         border = CardDefaults.outlinedCardBorder().copy(
+            // The app's own accent, not a residual Google-blue gradient - this card is
+            // "Ask NetPulse", not a Gemini surface, so its accent shouldn't read as one either.
             brush = Brush.horizontalGradient(
-                listOf(Color(0xFF8AB4F8).copy(alpha = 0.5f), NetPulseBorder)
+                listOf(NetPulseAccent.copy(alpha = 0.45f), NetPulseBorder)
             )
         )
     ) {
@@ -1058,12 +1114,34 @@ fun AiDashboardCopilotCard(
                                 color = NetPulseTextSecondary
                             )
 
-                            Text(
-                                text = consultation.response,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = NetPulseTextPrimary,
-                                lineHeight = 20.sp
-                            )
+                            val structured = consultation.structured
+                            if (structured != null) {
+                                CopilotAnswerSection(
+                                    label = "WHAT'S HAPPENING",
+                                    icon = Icons.Default.Visibility,
+                                    accentColor = NetPulseAccent,
+                                    body = structured.whatsHappening
+                                )
+                                CopilotAnswerSection(
+                                    label = "WHY",
+                                    icon = Icons.Default.Psychology,
+                                    accentColor = StatusDegraded,
+                                    body = structured.why
+                                )
+                                CopilotAnswerSection(
+                                    label = "WHAT I RECOMMEND",
+                                    icon = Icons.Default.TipsAndUpdates,
+                                    accentColor = StatusOptimal,
+                                    body = structured.recommendation
+                                )
+                            } else {
+                                Text(
+                                    text = consultation.response,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = NetPulseTextPrimary,
+                                    lineHeight = 20.sp
+                                )
+                            }
                         }
                     }
                 }

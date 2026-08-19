@@ -384,6 +384,8 @@ fun WifiRadarCard(radar: WifiRadarSnapshot) {
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = StatusOptimal,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
@@ -499,6 +501,9 @@ fun CellularRfCard(
                 }
 
                 if (cellular.isCellularConnected) {
+                    // A real device report showed this badge collapsing into a tall column of
+                    // single characters when its available width was squeezed - maxLines=1
+                    // makes that layout shape structurally impossible regardless of cause.
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = StatusGoodBg
@@ -508,6 +513,8 @@ fun CellularRfCard(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = StatusGood,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }

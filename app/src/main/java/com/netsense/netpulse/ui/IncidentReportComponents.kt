@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.model.IncidentReport
@@ -132,7 +133,10 @@ fun TechnicalIncidentReportCard(
                     ) {
                         Icon(imageVector = Icons.Default.Assessment, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Generate", fontSize = 12.sp)
+                        // A real device report showed this label collapsing into a tall column
+                        // of single characters when its available width was squeezed -
+                        // maxLines=1 makes that layout shape structurally impossible.
+                        Text("Generate", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

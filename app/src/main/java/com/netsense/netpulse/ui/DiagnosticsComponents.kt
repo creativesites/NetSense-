@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.model.DualStackResult
@@ -328,7 +329,10 @@ fun MultiHostPingMatrixCard(
                     ) {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Probe All", fontSize = 12.sp)
+                        // A real device report showed this label collapsing into a tall column
+                        // of single characters when its available width was squeezed -
+                        // maxLines=1 makes that layout shape structurally impossible.
+                        Text("Probe All", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -535,7 +539,7 @@ fun PathHopTracerCard(
                     ) {
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Trace", fontSize = 12.sp)
+                        Text("Trace", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -630,6 +634,8 @@ private fun ProtocolBadge(isReachable: Boolean) {
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             color = fg,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
         )
     }

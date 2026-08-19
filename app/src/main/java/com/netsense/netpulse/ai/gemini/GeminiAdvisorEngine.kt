@@ -20,13 +20,28 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+/**
+ * A response broken into the three questions a person actually has when their Internet is
+ * acting up, instead of one undifferentiated paragraph: what's going on, why it's happening,
+ * and what to do about it. Only populated for the local PulseMind fallback (the only path
+ * actually reachable today, since no real Gemini key is configured) - the live Gemini path
+ * below is left returning free-form text rather than guessing at a 3-way split of a response
+ * this app has never actually received.
+ */
+data class StructuredAdvice(
+    val whatsHappening: String,
+    val why: String,
+    val recommendation: String
+)
+
 data class GeminiAiConsultation(
     val query: String,
     val response: String,
     val timestamp: Long = System.currentTimeMillis(),
     val source: String = "Gemini 3.5 Flash",
     val isLoading: Boolean = false,
-    val suggestedFixes: List<String> = emptyList()
+    val suggestedFixes: List<String> = emptyList(),
+    val structured: StructuredAdvice? = null
 )
 
 class GeminiAdvisorEngine {
@@ -85,12 +100,13 @@ class GeminiAdvisorEngine {
         // If no API key or placeholder, provide high-grade local reasoning fallback
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY" || apiKey == "YOUR_GEMINI_API_KEY") {
             val localExplanation = fallbackMind.explain(snapshot, scoreResult, probeResult, prediction, rfSnapshot, wifiSnapshot)
-            val fallbackResponse = generateLocalConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot)
+            val structured = generateLocalStructuredConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot)
             return@withContext GeminiAiConsultation(
                 query = prompt,
-                response = fallbackResponse,
+                response = structured.flatten(),
                 source = "PulseMind Local Reasoning Engine",
-                suggestedFixes = localExplanation.keySignals
+                suggestedFixes = localExplanation.keySignals,
+                structured = structured
             )
         }
 
@@ -128,11 +144,13 @@ class GeminiAdvisorEngine {
             if (!response.isSuccessful) {
                 Log.w("GeminiAdvisor", "API Error ${response.code}: $responseBody")
                 val localExplanation = fallbackMind.explain(snapshot, scoreResult, probeResult, prediction, rfSnapshot, wifiSnapshot)
+                val structured = generateLocalStructuredConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot)
                 return@withContext GeminiAiConsultation(
                     query = prompt,
-                    response = generateLocalConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot),
+                    response = structured.flatten(),
                     source = "PulseMind Local Fallback",
-                    suggestedFixes = localExplanation.keySignals
+                    suggestedFixes = localExplanation.keySignals,
+                    structured = structured
                 )
             }
 
@@ -152,54 +170,84 @@ class GeminiAdvisorEngine {
         } catch (e: Exception) {
             Log.e("GeminiAdvisor", "Exception during Gemini consultation", e)
             val localExplanation = fallbackMind.explain(snapshot, scoreResult, probeResult, prediction, rfSnapshot, wifiSnapshot)
+            val structured = generateLocalStructuredConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot)
             GeminiAiConsultation(
                 query = prompt,
-                response = generateLocalConsultation(prompt, localExplanation, scoreResult, probeResult, snapshot),
+                response = structured.flatten(),
                 source = "PulseMind Offline Engine",
-                suggestedFixes = localExplanation.keySignals
+                suggestedFixes = localExplanation.keySignals,
+                structured = structured
             )
         }
     }
 
-    private fun generateLocalConsultation(
+    /**
+     * Same underlying diagnosis RuleBasedPulseMind already computed (deterministically, from
+     * real telemetry - nothing here re-derives or fabricates a verdict), split into the three
+     * questions a non-technical user actually has: what's going on, why, and what to do. Each
+     * prompt category below already separated a description from a recommendation with a
+     * "Recommendation:" marker; this just gives that split a name instead of one run-on
+     * paragraph.
+     */
+    private fun generateLocalStructuredConsultation(
         prompt: String,
         explanation: PulseMindExplanation,
         scoreResult: UsabilityScoreResult?,
         probeResult: DiagnosticProbeResult?,
         snapshot: NetworkSnapshot
-    ): String {
+    ): StructuredAdvice {
         val lower = prompt.lowercase()
-        return buildString {
-            if (lower.contains("ping") || lower.contains("latency") || lower.contains("jitter")) {
-                appendLine("⚡ **Latency & RTT Analysis**:")
+        return when {
+            lower.contains("ping") || lower.contains("latency") || lower.contains("jitter") -> {
                 val tcp = probeResult?.averageTcpMs ?: 0
                 val jitter = probeResult?.tcpJitterMs ?: 0
                 if (tcp > 150 || jitter > 30) {
-                    appendLine("Your connection exhibits elevated round-trip time ($tcp ms) with high packet jitter ($jitter ms). This is likely caused by uplink congestion or bufferbloat on the local gateway.")
-                    appendLine("• Recommendation: Switch DNS to 1.1.1.1 or 8.8.8.8, and prioritize QoS on router.")
+                    StructuredAdvice(
+                        whatsHappening = "Your connection has elevated round-trip time ($tcp ms) with high packet jitter ($jitter ms).",
+                        why = "This is most often caused by uplink congestion or bufferbloat on the local gateway - the link is up, but packets are queuing before they leave.",
+                        recommendation = "Switch your DNS to 1.1.1.1 or 8.8.8.8, and enable QoS/traffic prioritization on your router if it supports it."
+                    )
                 } else {
-                    appendLine("Round-trip latency is currently stable at $tcp ms with minimal jitter ($jitter ms). Interactive and gaming streams will perform optimally.")
+                    StructuredAdvice(
+                        whatsHappening = "Round-trip latency is currently stable at $tcp ms with minimal jitter ($jitter ms).",
+                        why = "Nothing in your current telemetry points to congestion or an unstable path.",
+                        recommendation = "No action needed - interactive and real-time traffic should perform well right now."
+                    )
                 }
-            } else if (lower.contains("signal") || lower.contains("rssi") || lower.contains("rf") || lower.contains("drop")) {
-                appendLine("📡 **Physical Layer & Signal Assessment**:")
-                appendLine(explanation.narrative)
-                appendLine("• Suggested Fix: ${explanation.recoveryRecommendation}")
-            } else if (lower.contains("captive") || lower.contains("zombie") || lower.contains("login")) {
-                appendLine("🛡️ **Captive Portal & Ghost Link Inspection**:")
-                if (scoreResult?.isZombieConnection == true) {
-                    appendLine("ALERT: Zombie connection detected! Your interface reports active association, but Layer 4 TCP handshakes and HTTP probes are failing 100%.")
-                    appendLine("• Recommendation: Open captive portal sign-in page or toggle Wi-Fi.")
-                } else {
-                    appendLine("No captive portal interception detected. WAN transit routes are verified open.")
-                }
-            } else {
-                appendLine("🧠 **AI Diagnostic Assessment**:")
-                appendLine(explanation.headline)
-                appendLine()
-                appendLine(explanation.narrative)
-                appendLine()
-                appendLine("💡 **Actionable Remedy**: ${explanation.recoveryRecommendation}")
             }
+            lower.contains("signal") || lower.contains("rssi") || lower.contains("rf") || lower.contains("drop") -> StructuredAdvice(
+                whatsHappening = explanation.headline,
+                why = explanation.narrative,
+                recommendation = explanation.recoveryRecommendation
+            )
+            lower.contains("captive") || lower.contains("zombie") || lower.contains("login") -> {
+                if (scoreResult?.isZombieConnection == true) {
+                    StructuredAdvice(
+                        whatsHappening = "A zombie connection: your radio reports an active link, but every TCP handshake and HTTP probe is failing.",
+                        why = "The radio-level connection came up, but the carrier or Wi-Fi router never actually finished routing you to the Internet - a stale or incomplete session on their side.",
+                        recommendation = "Open the captive portal sign-in page if one appears, or toggle Wi-Fi/Airplane Mode to force a fresh session."
+                    )
+                } else {
+                    StructuredAdvice(
+                        whatsHappening = "No captive portal or zombie connection detected right now.",
+                        why = "Your last probe confirmed the route to the Internet is actually open, not just radio-connected.",
+                        recommendation = "No action needed."
+                    )
+                }
+            }
+            else -> StructuredAdvice(
+                whatsHappening = explanation.headline,
+                why = explanation.narrative,
+                recommendation = explanation.recoveryRecommendation
+            )
         }
     }
+}
+
+private fun StructuredAdvice.flatten(): String = buildString {
+    appendLine(whatsHappening)
+    appendLine()
+    appendLine(why)
+    appendLine()
+    append(recommendation)
 }
