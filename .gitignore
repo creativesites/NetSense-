@@ -17,6 +17,14 @@ local.properties
 .env
 debug.keystore
 
+# Android release signing - the upload keystore must never be committed. It lives
+# outside this repo, in $HOME/android-keystores/netpulse/ ; these patterns are a
+# safety net only.
+*.jks
+*.keystore
+*.p12
+keystore.properties
+
 # NetPulse ML Lab (ml/) - see ml/README.md
 ml/.venv
 ml/__pycache__/
