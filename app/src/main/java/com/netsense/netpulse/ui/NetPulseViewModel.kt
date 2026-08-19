@@ -248,10 +248,23 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
     private var speedTestJob: Job? = null
 
     init {
-        // Observe Settings DataStore
+        // Observe Settings DataStore. Also reconciles the Sentinel service's actual running
+        // state with the user's persisted intent exactly once per process start - if the
+        // process was killed and restarted (or the app was simply reopened) while the user had
+        // monitoring enabled, this restarts it rather than leaving isSentinelRunning=false in a
+        // fresh ViewModel while the user's actual intent was "on". startForegroundService is
+        // safe to call even if the service is already running.
+        var reconciledSentinelStateOnce = false
         viewModelScope.launch {
             preferences.settingsFlow.collect { settings ->
                 _uiState.update { it.copy(appSettings = settings) }
+                if (!reconciledSentinelStateOnce) {
+                    reconciledSentinelStateOnce = true
+                    if (settings.sentinelEnabled) {
+                        NetPulseSentinelService.startService(application)
+                        _uiState.update { it.copy(isSentinelRunning = true) }
+                    }
+                }
             }
         }
 
@@ -511,6 +524,9 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
             NetPulseSentinelService.stopService(context)
         }
         _uiState.update { it.copy(isSentinelRunning = nextState) }
+        // Persisted so this survives process death and device reboots - see
+        // BootReceiver, which reads this same value to resume monitoring after a reboot.
+        viewModelScope.launch { preferences.setSentinelEnabled(nextState) }
     }
 
     fun runActiveProbe(mode: DiagnosticMode = _uiState.value.selectedMode) {

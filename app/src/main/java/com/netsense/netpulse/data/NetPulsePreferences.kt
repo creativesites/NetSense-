@@ -28,7 +28,12 @@ data class AppSettings(
      *  retention since this table is one row per telemetry tick (the ~14MB/day source),
      *  not one row per user-visible probe. */
     val rawTelemetryRetentionDays: Int = 14,
-    val lastDataPurgeTimestamp: Long = 0L
+    val lastDataPurgeTimestamp: Long = 0L,
+    /** The user's actual intent for the background Sentinel service, persisted so it survives
+     *  process death and device reboots - previously this only lived in in-memory ViewModel
+     *  state, so a killed process or a reboot silently stopped monitoring (the app's most
+     *  valuable feature) with no way for the app to know to restart it. */
+    val sentinelEnabled: Boolean = false
 )
 
 class NetPulsePreferences(private val context: Context) {
@@ -43,6 +48,7 @@ class NetPulsePreferences(private val context: Context) {
         val KEY_DIAGNOSTIC_LOG_RETENTION_DAYS = intPreferencesKey("diagnostic_log_retention_days")
         val KEY_RAW_TELEMETRY_RETENTION_DAYS = intPreferencesKey("raw_telemetry_retention_days")
         val KEY_LAST_DATA_PURGE_TIMESTAMP = longPreferencesKey("last_data_purge_timestamp")
+        val KEY_SENTINEL_ENABLED = booleanPreferencesKey("sentinel_enabled")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { preferences ->
@@ -55,7 +61,8 @@ class NetPulsePreferences(private val context: Context) {
             onboardingCompleted = preferences[KEY_ONBOARDING_COMPLETED] ?: false,
             diagnosticLogRetentionDays = preferences[KEY_DIAGNOSTIC_LOG_RETENTION_DAYS] ?: 30,
             rawTelemetryRetentionDays = preferences[KEY_RAW_TELEMETRY_RETENTION_DAYS] ?: 14,
-            lastDataPurgeTimestamp = preferences[KEY_LAST_DATA_PURGE_TIMESTAMP] ?: 0L
+            lastDataPurgeTimestamp = preferences[KEY_LAST_DATA_PURGE_TIMESTAMP] ?: 0L,
+            sentinelEnabled = preferences[KEY_SENTINEL_ENABLED] ?: false
         )
     }
 
@@ -110,6 +117,12 @@ class NetPulsePreferences(private val context: Context) {
     suspend fun setLastDataPurgeTimestamp(timestamp: Long) {
         context.dataStore.edit { preferences ->
             preferences[KEY_LAST_DATA_PURGE_TIMESTAMP] = timestamp
+        }
+    }
+
+    suspend fun setSentinelEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_SENTINEL_ENABLED] = enabled
         }
     }
 }
