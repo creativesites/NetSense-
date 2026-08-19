@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.model.CellularRfSnapshot
@@ -419,23 +420,19 @@ fun WifiRadarCard(radar: WifiRadarSnapshot) {
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // RF Technical Details Grid
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                // RF Technical Details Grid - 2-per-row (see RfChip for why 3-per-row wrapped
+                // labels into narrow vertical strips on smaller screens).
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RfChip("Channel", "${radar.channelNumber} (${radar.frequencyMhz}MHz)", Modifier.weight(1f))
                     RfChip("Width", "${radar.channelWidthMhz} MHz", Modifier.weight(1f))
-                    RfChip("Standard", radar.wifiStandard, Modifier.weight(1f))
                 }
-
                 Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RfChip("Standard", radar.wifiStandard, Modifier.weight(1f))
                     RfChip("Link Speed", "${radar.linkSpeedMbps} Mbps", Modifier.weight(1f))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RfChip("Congestion", radar.congestionLevel, Modifier.weight(1f))
                     RfChip("Interference", radar.interferenceRisk, Modifier.weight(1f))
                 }
@@ -528,28 +525,25 @@ fun CellularRfCard(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // RF Engineering Grid (RSRP, RSRQ, SINR, CQI) - "N/A" whenever the detailed
-            // registered-cell reading wasn't actually measured this cycle. Never fabricate
-            // a plausible-looking placeholder number here.
+            // RF Engineering Grid (RSRP, RSRQ, SINR, CQI, Band, Cell ID/PCI) - "N/A" whenever
+            // the detailed registered-cell reading wasn't actually measured this cycle. Never
+            // fabricate a plausible-looking placeholder number here. Laid out 2-per-row (not
+            // 3) so labels like "Serving Band" / "Cell ID / PCI" get enough width to stay on
+            // one line instead of wrapping into a narrow vertical strip.
             val measured = cellular.isRfDataMeasured
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RfChip("RSRP (Power)", cellular.rsrpDbm?.let { "$it dBm" } ?: "N/A", Modifier.weight(1f), isMeasured = cellular.rsrpDbm != null)
                 RfChip("RSRQ (Quality)", cellular.rsrqDb?.let { "$it dB" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
-                RfChip("SINR (SNR)", cellular.sinrDb?.let { "$it dB" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
             }
-
             Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RfChip("Serving Band", cellular.bandIndicator ?: "N/A", Modifier.weight(1.2f), isMeasured = measured)
-                RfChip("CQI Index", cellular.cqi?.let { "CQI $it" } ?: "N/A", Modifier.weight(0.9f), isMeasured = measured)
-                RfChip("Cell ID / PCI", cellular.pci?.let { "$it (PCI)" } ?: "N/A", Modifier.weight(0.9f), isMeasured = measured)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RfChip("SINR (SNR)", cellular.sinrDb?.let { "$it dB" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
+                RfChip("CQI Index", cellular.cqi?.let { "CQI $it" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RfChip("Serving Band", cellular.bandIndicator ?: "N/A", Modifier.weight(1f), isMeasured = measured)
+                RfChip("Cell ID / PCI", cellular.pci?.let { "$it (PCI)" } ?: "N/A", Modifier.weight(1f), isMeasured = measured)
             }
         }
     }
@@ -622,20 +616,25 @@ private fun RfUnavailableBanner(
 
 @Composable
 private fun RfChip(label: String, value: String, modifier: Modifier = Modifier, isMeasured: Boolean = true) {
+    // maxLines=1+ellipsis on BOTH lines is the fix for the "narrow vertical bar" bug: the
+    // label previously had no line cap at all, so a longer label (e.g. "Serving Band", "Cell
+    // ID / PCI") crammed into a 3-wide equal-weight Row would wrap across several lines and
+    // read as a tall narrow strip instead of a chip.
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = NetPulseSurfaceVariant,
         modifier = modifier
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            Text(label, fontSize = 10.sp, color = NetPulseTextTertiary)
+            Text(label, fontSize = 10.sp, color = NetPulseTextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 value,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (isMeasured) NetPulseTextPrimary else NetPulseTextTertiary,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

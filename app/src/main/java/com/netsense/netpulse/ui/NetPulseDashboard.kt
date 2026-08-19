@@ -97,6 +97,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -111,6 +112,8 @@ import com.netsense.netpulse.engine.IssueSeverity
 import com.netsense.netpulse.engine.SimulatedFaultScenario
 import com.netsense.netpulse.engine.SpeedTestState
 import com.netsense.netpulse.engine.TroubleshootFinding
+import com.netsense.netpulse.model.ConnectionPresentationMapper
+import com.netsense.netpulse.model.ConnectionVisual
 import com.netsense.netpulse.model.DiagnosticMode
 import com.netsense.netpulse.model.DiagnosticProbeResult
 import com.netsense.netpulse.model.EndpointProbeDetail
@@ -155,6 +158,7 @@ fun NetPulseDashboard(
     onSelectTab: (DashboardTab) -> Unit,
     onSelectPrimaryTab: (PrimaryTab) -> Unit = {},
     onFixIt: () -> Unit = {},
+    onRetryFix: () -> Unit = {},
     onDismissHealingOutcome: () -> Unit = {},
     onSelectMode: (DiagnosticMode) -> Unit,
     onToggleSentinel: () -> Unit = {},
@@ -196,6 +200,15 @@ fun NetPulseDashboard(
 
     var hasLocationPermission by remember { mutableStateOf(checkLocationPermission()) }
     var isLocationServicesEnabled by remember { mutableStateOf(checkLocationServicesEnabled()) }
+
+    // The header used to show a static tagline ("AI & RF Diagnostics Suite") that never
+    // changed - replaced with the same live status every other surface (Home, notification)
+    // already agrees on, so it's actually useful at a glance from any tab.
+    val headerPresentation = ConnectionPresentationMapper.map(
+        status = uiState.policyDecision.state,
+        snapshot = uiState.snapshot,
+        scoreResult = uiState.scoreResult
+    )
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -275,6 +288,28 @@ fun NetPulseDashboard(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = StatusZombie
                                 )
+                            } else {
+                                val statusColor = when (headerPresentation.visual) {
+                                    ConnectionVisual.CHECK, ConnectionVisual.RECOVERED -> StatusOptimal
+                                    ConnectionVisual.PULSE_WARNING -> StatusDegraded
+                                    ConnectionVisual.ALERT, ConnectionVisual.OFFLINE -> StatusUnusable
+                                    ConnectionVisual.RECOVERING, ConnectionVisual.SEARCHING -> StatusGood
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(statusColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = "${uiState.scoreResult.score}/100 · ${headerPresentation.statusLine}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NetPulseTextTertiary,
+                                        modifier = Modifier.testTag("header_status_line")
+                                    )
+                                }
                             }
                         }
                     }
@@ -331,6 +366,7 @@ fun NetPulseDashboard(
                         onRequestPermissions = requestLocationPermission,
                         onOpenLocationSettings = openLocationSettings,
                         onFixIt = onFixIt,
+                        onRetryFix = onRetryFix,
                         onDismissHealingOutcome = onDismissHealingOutcome,
                         onNavigateToAdvanced = { onSelectPrimaryTab(PrimaryTab.ADVANCED) },
                         onNavigateToHistory = { onSelectPrimaryTab(PrimaryTab.HISTORY) }
@@ -1465,25 +1501,34 @@ fun MinimalistMetricPill(
     isSuccess: Boolean,
     modifier: Modifier = Modifier
 ) {
+    // maxLines=1 + ellipsis is load-bearing here, not cosmetic: without it, cramming several
+    // of these into one equal-weight Row (as several screens did) let a long label wrap onto
+    // multiple lines inside a narrow column, which read as a tall "narrow vertical bar" rather
+    // than a pill - the actual bug several pages were hitting.
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = NetPulseSurfaceVariant,
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = NetPulseTextTertiary
+                color = NetPulseTextTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = value,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (isSuccess) NetPulseTextPrimary else StatusUnusable
+                color = if (isSuccess) NetPulseTextPrimary else StatusUnusable,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1983,8 +2028,8 @@ fun SpeedStatCard(
         ) {
             Icon(imageVector = icon, contentDescription = null, tint = NetPulseAccent, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.height(4.dp))
-            Text(text = title, style = MaterialTheme.typography.labelSmall, color = NetPulseTextTertiary)
-            Text(text = value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = NetPulseTextPrimary)
+            Text(text = title, style = MaterialTheme.typography.labelSmall, color = NetPulseTextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = NetPulseTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -2254,6 +2299,9 @@ fun AnalyticsLogsTabContent(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // A 2-per-row grid (not 3-4 equal-weight items crammed into one Row) gives
+                    // each pill enough width for its label to stay on one line - cramming more
+                    // in per row was causing labels to wrap into a tall, narrow strip.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2265,11 +2313,19 @@ fun AnalyticsLogsTabContent(
                             modifier = Modifier.weight(1f)
                         )
                         MinimalistMetricPill(
-                            label = "Uptime %",
+                            label = "Uptime",
                             value = "${analytics.uptimePercentage.toInt()}%",
                             isSuccess = analytics.uptimePercentage >= 80f,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         MinimalistMetricPill(
                             label = "Zombies",
                             value = "${analytics.zombieCount}",
@@ -2302,12 +2358,21 @@ fun AnalyticsLogsTabContent(
                             isSuccess = analytics.averageTcpMs < 150,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         MinimalistMetricPill(
                             label = "Avg HTTP",
                             value = "${analytics.averageHttpMs}ms",
                             isSuccess = analytics.averageHttpMs < 250,
                             modifier = Modifier.weight(1f)
                         )
+                        androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }

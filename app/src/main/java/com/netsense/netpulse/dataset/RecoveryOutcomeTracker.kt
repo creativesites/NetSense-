@@ -17,8 +17,12 @@ class RecoveryOutcomeTracker(private val dao: RecoveryOutcomeDao) {
         /** Minimum time to let a recovery action take effect before it's eligible to be judged. */
         const val MIN_SETTLE_MS = 4_000L
 
-        /** How long to wait for real recovery before giving up and marking FAILED. */
-        const val RECOVERY_TIMEOUT_MS = 90_000L
+        /** How long to wait for real recovery before giving up and marking FAILED. 90s made the
+         *  Home healing screen feel stuck for a long, unexplained wait - most of these actions
+         *  (radio re-registration after an airplane-mode toggle, DNS re-resolution) settle well
+         *  within 45s in practice, so there's no honest reason to keep the user waiting longer
+         *  before offering a retry. */
+        const val RECOVERY_TIMEOUT_MS = 45_000L
 
         /** Minimum score improvement (on top of isValidated && !isZombie) to count as recovered. */
         const val MIN_SCORE_IMPROVEMENT = 15

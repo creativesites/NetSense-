@@ -404,6 +404,15 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(healingOutcome = null) }
     }
 
+    /** "Try Again" on a failed healing outcome - clears the outcome and immediately
+     *  re-dispatches the fix, rather than just dismissing back to a static hero card the user
+     *  would have to tap Fix It on again. Re-reads PulsePolicy's *current* recommendation
+     *  (not the one that just failed), since real state may have shifted since the attempt. */
+    fun retryFix(context: Context) {
+        _uiState.update { it.copy(healingOutcome = null) }
+        fixIt(context)
+    }
+
     fun setProbeMode(mode: DiagnosticMode) {
         _uiState.update { it.copy(selectedMode = mode) }
     }

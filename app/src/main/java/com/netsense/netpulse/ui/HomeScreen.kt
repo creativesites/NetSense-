@@ -37,6 +37,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.netsense.netpulse.data.DiagnosticLogEntity
 import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.ConnectionVisual
+import com.netsense.netpulse.model.HealerActionItem
 import com.netsense.netpulse.model.NetworkTransport
 import com.netsense.netpulse.ui.theme.NetPulseAccent
 import com.netsense.netpulse.ui.theme.NetPulseSurface
@@ -57,6 +63,7 @@ import com.netsense.netpulse.ui.theme.NetPulseTextSecondary
 import com.netsense.netpulse.ui.theme.NetPulseTextTertiary
 import com.netsense.netpulse.ui.theme.StatusOptimal
 import com.netsense.netpulse.ui.theme.StatusUnusable
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -75,6 +82,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit,
     onOpenLocationSettings: () -> Unit,
     onFixIt: () -> Unit,
+    onRetryFix: () -> Unit,
     onDismissHealingOutcome: () -> Unit,
     onNavigateToAdvanced: () -> Unit,
     onNavigateToHistory: () -> Unit
@@ -104,15 +112,7 @@ fun HomeScreen(
             }
         }
 
-        item {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "NetPulse",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = NetPulseTextPrimary
-            )
-        }
+        item { Spacer(modifier = Modifier.height(4.dp)) }
 
         item {
             AnimatedContent(
@@ -125,7 +125,11 @@ fun HomeScreen(
                         succeeded = outcome.succeeded,
                         durationMs = outcome.durationMs,
                         message = outcome.message,
-                        onDone = onDismissHealingOutcome
+                        carrierName = uiState.snapshot.carrierName,
+                        networkLabel = uiState.snapshot.cellularDataNetworkType,
+                        transport = uiState.snapshot.primaryTransport,
+                        onDone = onDismissHealingOutcome,
+                        onTryAgain = onRetryFix
                     )
                 } else {
                     ConnectionHeroCard(
@@ -136,6 +140,7 @@ fun HomeScreen(
                         showFixAction = presentation.showFixAction && !uiState.isHealing,
                         fixActionLabel = presentation.fixActionLabel,
                         isHealing = uiState.isHealing,
+                        healingAction = uiState.policyDecision.recommendedAction,
                         onFixIt = onFixIt,
                         carrierName = uiState.snapshot.carrierName,
                         networkLabel = uiState.snapshot.cellularDataNetworkType,
@@ -149,6 +154,10 @@ fun HomeScreen(
 
         item {
             MonitoringStatusRow(isSentinelRunning = uiState.isSentinelRunning)
+        }
+
+        item {
+            NetworkProgressionChartCard(logs = uiState.persistentLogs)
         }
 
         item {
@@ -175,6 +184,7 @@ private fun ConnectionHeroCard(
     showFixAction: Boolean,
     fixActionLabel: String,
     isHealing: Boolean,
+    healingAction: HealerActionItem?,
     onFixIt: () -> Unit,
     carrierName: String?,
     networkLabel: String?,
@@ -232,12 +242,21 @@ private fun ConnectionHeroCard(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = if (isHealing) "NetPulse is working on it." else supportingText,
+            text = if (isHealing) {
+                healingAction?.description ?: "NetPulse is working on it."
+            } else {
+                supportingText
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = NetPulseTextSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
+
+        if (isHealing) {
+            Spacer(modifier = Modifier.height(10.dp))
+            HealingProgressTicker()
+        }
 
         if (!carrierName.isNullOrBlank() || !networkLabel.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(10.dp))
@@ -285,12 +304,41 @@ private fun ConnectionHeroCard(
     }
 }
 
+/**
+ * A live elapsed-time readout with rotating micro-copy, so the (real, up to ~45s) wait for a
+ * recovery attempt to settle reads as active progress rather than a frozen spinner. The
+ * messages describe generic waiting states, never a fabricated specific outcome.
+ */
+@Composable
+private fun HealingProgressTicker() {
+    val startedAtMs = remember { System.currentTimeMillis() }
+    var elapsedSec by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            elapsedSec = ((System.currentTimeMillis() - startedAtMs) / 1000).toInt()
+            delay(1000)
+        }
+    }
+    val messages = listOf("Waiting for the radio to reconnect", "Checking your connection", "Almost there")
+    val message = messages[(elapsedSec / 8).coerceAtMost(messages.size - 1)]
+    Text(
+        text = "$message · ${elapsedSec}s",
+        style = MaterialTheme.typography.labelMedium,
+        color = NetPulseTextTertiary,
+        modifier = Modifier.testTag("home_healing_ticker")
+    )
+}
+
 @Composable
 private fun HealingOutcomeCard(
     succeeded: Boolean,
     durationMs: Long,
     message: String,
-    onDone: () -> Unit
+    carrierName: String?,
+    networkLabel: String?,
+    transport: NetworkTransport,
+    onDone: () -> Unit,
+    onTryAgain: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         HealthRing(
@@ -328,10 +376,28 @@ private fun HealingOutcomeCard(
             modifier = Modifier.padding(horizontal = 12.dp)
         )
 
+        if (!carrierName.isNullOrBlank() || !networkLabel.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (transport == NetworkTransport.WIFI) Icons.Default.Wifi else Icons.Default.CellTower,
+                    contentDescription = null,
+                    tint = NetPulseTextTertiary,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = listOfNotNull(carrierName, networkLabel).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = NetPulseTextTertiary
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         Button(
-            onClick = onDone,
+            onClick = if (succeeded) onDone else onTryAgain,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (succeeded) StatusOptimal else NetPulseAccent,
@@ -342,6 +408,19 @@ private fun HealingOutcomeCard(
                 .testTag("home_healing_done_button")
         ) {
             Text(if (succeeded) "DONE" else "TRY AGAIN", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+
+        if (!succeeded) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Dismiss",
+                style = MaterialTheme.typography.labelMedium,
+                color = NetPulseTextTertiary,
+                modifier = Modifier
+                    .clickable { onDone() }
+                    .padding(8.dp)
+                    .testTag("home_healing_dismiss_button")
+            )
         }
     }
 }

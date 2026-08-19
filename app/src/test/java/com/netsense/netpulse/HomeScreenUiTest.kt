@@ -3,6 +3,9 @@ package com.netsense.netpulse
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.netsense.netpulse.model.HealerActionItem
 import com.netsense.netpulse.model.HealerActionType
 import com.netsense.netpulse.model.NetworkSnapshot
@@ -54,7 +57,11 @@ class HomeScreenUiTest {
         scoreBreakdown = emptyMap()
     )
 
-    private fun render(uiState: DashboardUiState) {
+    private fun render(
+        uiState: DashboardUiState,
+        onRetryFix: () -> Unit = {},
+        onDismissHealingOutcome: () -> Unit = {}
+    ) {
         composeTestRule.setContent {
             NetPulseTheme {
                 HomeScreen(
@@ -64,7 +71,8 @@ class HomeScreenUiTest {
                     onRequestPermissions = {},
                     onOpenLocationSettings = {},
                     onFixIt = {},
-                    onDismissHealingOutcome = {},
+                    onRetryFix = onRetryFix,
+                    onDismissHealingOutcome = onDismissHealingOutcome,
                     onNavigateToAdvanced = {},
                     onNavigateToHistory = {}
                 )
@@ -144,7 +152,72 @@ class HomeScreenUiTest {
     }
 
     @Test
-    fun `a resolved healing outcome replaces the hero card with a done button`() {
+    fun `a successful outcome's Done button dismisses without retrying`() {
+        var dismissed = false
+        var retried = false
+        render(
+            DashboardUiState(
+                snapshot = healthySnapshot,
+                scoreResult = score(UsabilityRating.OPTIMAL, value = 90),
+                healingOutcome = HealingOutcome(succeeded = true, durationMs = 8_000L, message = "Recovered")
+            ),
+            onRetryFix = { retried = true },
+            onDismissHealingOutcome = { dismissed = true }
+        )
+
+        composeTestRule.onNodeWithTag("home_healing_done_button").assertIsDisplayed().performClick()
+
+        assert(dismissed) { "expected Done to dismiss the outcome" }
+        assert(!retried) { "Done must not trigger a retry" }
+    }
+
+    private fun failedOutcomeState() = DashboardUiState(
+        snapshot = healthySnapshot,
+        scoreResult = score(UsabilityRating.UNUSABLE, isZombie = true, value = 10),
+        healingOutcome = HealingOutcome(
+            succeeded = false,
+            durationMs = 45_000L,
+            message = "The carrier connection appears to be stalled."
+        )
+    )
+
+    @Test
+    fun `a failed outcome's Try Again button retries immediately rather than just dismissing`() {
+        var dismissed = false
+        var retried = false
+        render(
+            failedOutcomeState(),
+            onRetryFix = { retried = true },
+            onDismissHealingOutcome = { dismissed = true }
+        )
+
+        // The primary button on a failure must re-trigger the fix, not just return the user
+        // to the hero card (the exact regression reported: "try again is going straight to
+        // the network info" instead of retrying).
+        composeTestRule.onNodeWithTag("home_healing_done_button").assertIsDisplayed().performClick()
+        assert(retried) { "expected Try Again to retry the fix" }
+        assert(!dismissed) { "Try Again must not merely dismiss" }
+    }
+
+    @Test
+    fun `a failed outcome's separate Dismiss link dismisses without retrying`() {
+        var dismissed = false
+        var retried = false
+        render(
+            failedOutcomeState(),
+            onRetryFix = { retried = true },
+            onDismissHealingOutcome = { dismissed = true }
+        )
+
+        // The dismiss link sits below the fold in this test's viewport - scroll the LazyColumn
+        // to it before clicking, same as a real user would.
+        composeTestRule.onNodeWithTag("home_healing_dismiss_button").performScrollTo().performClick()
+        assert(dismissed) { "expected the dismiss link to dismiss the outcome" }
+        assert(!retried) { "Dismiss must not trigger a retry" }
+    }
+
+    @Test
+    fun `the healing outcome card shows carrier and network info, not just the result`() {
         render(
             DashboardUiState(
                 snapshot = healthySnapshot,
@@ -153,23 +226,33 @@ class HomeScreenUiTest {
             )
         )
 
-        composeTestRule.onNodeWithTag("home_healing_done_button").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Airtel Zambia · 4G LTE", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun `a failed healing outcome offers Try Again instead of Done`() {
+    fun `an active healing session shows a live progress ticker, not a frozen message`() {
+        val action = HealerActionItem(
+            id = "healer_airplane_cycle",
+            title = "Radio PDP Context Reset",
+            description = "Cellular signal is strong but upstream routing is dead.",
+            impactLevel = "High Impact",
+            actionType = HealerActionType.AIRPLANE_CYCLE
+        )
         render(
             DashboardUiState(
                 snapshot = healthySnapshot,
-                scoreResult = score(UsabilityRating.UNUSABLE, isZombie = true, value = 10),
-                healingOutcome = HealingOutcome(
-                    succeeded = false,
-                    durationMs = 90_000L,
-                    message = "The carrier connection appears to be stalled."
-                )
+                scoreResult = score(UsabilityRating.UNUSABLE, isZombie = true, value = 20),
+                policyDecision = PolicyDecision(
+                    state = ProductStatus.NO_INTERNET,
+                    recommendedAction = action,
+                    reason = "test",
+                    predictionAvailable = false
+                ),
+                isHealing = true
             )
         )
 
-        composeTestRule.onNodeWithTag("home_healing_done_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("home_healing_ticker").assertIsDisplayed()
+        composeTestRule.onNodeWithText(action.description, substring = true).assertIsDisplayed()
     }
 }

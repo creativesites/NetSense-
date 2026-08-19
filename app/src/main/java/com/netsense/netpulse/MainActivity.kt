@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
                         onSelectTab = { tab -> viewModel.setTab(tab) },
                         onSelectPrimaryTab = { tab -> viewModel.setPrimaryTab(tab) },
                         onFixIt = { viewModel.fixIt(this@MainActivity) },
+                        onRetryFix = { viewModel.retryFix(this@MainActivity) },
                         onDismissHealingOutcome = { viewModel.dismissHealingOutcome() },
                         onSelectMode = { mode -> viewModel.setProbeMode(mode) },
                         onToggleSentinel = { viewModel.toggleSentinelService(this@MainActivity) },
