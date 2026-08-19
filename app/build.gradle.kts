@@ -1,12 +1,9 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
 }
 
 android {
@@ -17,10 +14,29 @@ android {
     applicationId = "com.netsense.netpulse"
     minSdk = 26
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // AdMob - see MONETIZATION.md for the full architecture. Real production ad-unit IDs are
+    // supplied via an environment variable at build time and are never committed; when absent
+    // (as they are today - the AdMob app isn't linked/approved yet) the app safely falls back
+    // to Google's own official public test ad unit, never a blank/invalid ID.
+    buildConfigField("String", "ADMOB_BANNER_AD_UNIT_ID_TEST", "\"ca-app-pub-3940256099942544/9214589741\"")
+    buildConfigField(
+      "String",
+      "ADMOB_BANNER_AD_UNIT_ID_PROD",
+      "\"${System.getenv("ADMOB_BANNER_AD_UNIT_ID_PROD") ?: ""}\""
+    )
+
+    // Google's official public sample AdMob App ID. Used because this app is not yet
+    // registered/linked in the real AdMob console (publisher account pub-7694937680609846
+    // exists but is still under review) - swap for the real
+    // "ca-app-pub-<publisher>~<app-id-suffix>" once that registration is complete, via the
+    // ADMOB_APPLICATION_ID environment variable so no code change is needed.
+    manifestPlaceholders["admobApplicationId"] =
+      System.getenv("ADMOB_APPLICATION_ID") ?: "ca-app-pub-3940256099942544~3347511713"
   }
 
   signingConfigs {
@@ -65,16 +81,12 @@ android {
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
-
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
@@ -97,8 +109,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
-  // Uncomment to use Firestore:
+  // Uncomment to use Firestore (requires re-adding the firebase-bom + google-services plugin):
   // implementation(libs.firebase.firestore)
 
   // Uncomment ALL FOUR of the following dependencies together to use Firebase Auth and Google
@@ -107,7 +118,6 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  implementation(libs.firebase.appcheck.recaptcha)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)
@@ -115,6 +125,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.tensorflow.lite)
   // implementation(libs.play.services.location)
+  implementation(libs.play.services.ads)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

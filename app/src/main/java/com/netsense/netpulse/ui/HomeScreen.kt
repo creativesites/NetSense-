@@ -46,16 +46,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.netsense.netpulse.NetPulseApplication
 import com.netsense.netpulse.data.DiagnosticLogEntity
 import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.ConnectionVisual
 import com.netsense.netpulse.model.HealerActionItem
 import com.netsense.netpulse.model.NetworkTransport
+import com.netsense.netpulse.monetization.AdSlot
+import com.netsense.netpulse.monetization.NoOpAdProvider
 import com.netsense.netpulse.ui.theme.NetPulseAccent
 import com.netsense.netpulse.ui.theme.NetPulseSurface
 import com.netsense.netpulse.ui.theme.NetPulseTextPrimary
@@ -427,6 +431,18 @@ private fun HealingOutcomeCard(
                     .padding(8.dp)
                     .testTag("home_healing_dismiss_button")
             )
+        } else {
+            // AdSlot.HEALING_SUCCESS_BANNER - only once healing has genuinely resolved
+            // successfully (this whole branch only composes when succeeded == true), placed
+            // below the DONE button so the success state itself is never obscured. This
+            // composable only ever receives a resolved outcome (never mid-healing), so
+            // checking `succeeded` here is equivalent to monetization.isAdEligible for this slot.
+            Spacer(modifier = Modifier.height(16.dp))
+            val context = LocalContext.current
+            val adProvider = remember(context) {
+                (context.applicationContext as? NetPulseApplication)?.adProvider ?: NoOpAdProvider()
+            }
+            AdBannerView(slot = AdSlot.HEALING_SUCCESS_BANNER, adProvider = adProvider)
         }
     }
 }

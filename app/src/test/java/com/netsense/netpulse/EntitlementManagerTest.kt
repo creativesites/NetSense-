@@ -31,6 +31,7 @@ class EntitlementManagerTest {
         val provider = NoOpAdProvider()
         for (slot in AdSlot.values()) {
             assertEquals(AdResult.NoAdAvailable, provider.requestAd(slot))
+            assertEquals(null, provider.bannerAdUnitId(slot))
         }
     }
 }

@@ -24,13 +24,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.netsense.netpulse.NetPulseApplication
 import com.netsense.netpulse.data.DiagnosticLogEntity
+import com.netsense.netpulse.monetization.AdSlot
+import com.netsense.netpulse.monetization.NoOpAdProvider
 import com.netsense.netpulse.ui.theme.NetPulseSurface
 import com.netsense.netpulse.ui.theme.NetPulseTextPrimary
 import com.netsense.netpulse.ui.theme.NetPulseTextSecondary
@@ -113,6 +118,20 @@ fun HistoryScreen(
             ) {
                 items(incidents) { incident ->
                     IncidentCard(incident)
+                }
+                item {
+                    // The one ad placement on a screen with no diagnostic/healing state to
+                    // conflict with - a natural break after the user is done reviewing past
+                    // outages, never interrupting an active diagnosis (AdSlot.HISTORY_LIST_FOOTER).
+                    val context = LocalContext.current
+                    val adProvider = remember(context) {
+                        (context.applicationContext as? NetPulseApplication)?.adProvider ?: NoOpAdProvider()
+                    }
+                    AdBannerView(
+                        slot = AdSlot.HISTORY_LIST_FOOTER,
+                        adProvider = adProvider,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
                 item { Spacer(modifier = Modifier.height(16.dp)) }
             }
