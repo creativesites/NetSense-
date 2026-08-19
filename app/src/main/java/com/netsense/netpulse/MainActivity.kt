@@ -134,7 +134,11 @@ class MainActivity : ComponentActivity() {
                         onShareIncidentReport = { viewModel.shareIncidentReport() },
                         onRunBenchmark = { viewModel.runPredictorBenchmark() },
                         onConsultAi = { prompt -> viewModel.consultAi(prompt) },
-                        onClearAiConsultation = { viewModel.clearAiConsultation() }
+                        onClearAiConsultation = { viewModel.clearAiConsultation() },
+                        onRefreshDataStorageStats = { viewModel.refreshDataStorageStats() },
+                        onUpdateDiagnosticLogRetention = { days -> viewModel.updateDiagnosticLogRetentionSetting(days) },
+                        onUpdateRawTelemetryRetention = { days -> viewModel.updateRawTelemetryRetentionSetting(days) },
+                        onClearOldDataNow = { viewModel.runDataMaintenanceNow() }
                     )
                   }
                 }

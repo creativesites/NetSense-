@@ -6,8 +6,13 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [DiagnosticLogEntity::class, TelemetryObservationEntity::class, RecoveryOutcomeEntity::class],
-    version = 3,
+    entities = [
+        DiagnosticLogEntity::class,
+        TelemetryObservationEntity::class,
+        RecoveryOutcomeEntity::class,
+        DailyUsabilityAggregateEntity::class
+    ],
+    version = 4,
     exportSchema = false
 )
 abstract class NetPulseDatabase : RoomDatabase() {
@@ -15,6 +20,7 @@ abstract class NetPulseDatabase : RoomDatabase() {
     abstract fun diagnosticLogDao(): DiagnosticLogDao
     abstract fun telemetryObservationDao(): TelemetryObservationDao
     abstract fun recoveryOutcomeDao(): RecoveryOutcomeDao
+    abstract fun dailyUsabilityAggregateDao(): DailyUsabilityAggregateDao
 
     companion object {
         @Volatile

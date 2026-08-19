@@ -26,4 +26,15 @@ interface DiagnosticLogDao {
 
     @Query("DELETE FROM diagnostic_logs")
     suspend fun clearAllLogs()
+
+    // --- Data lifecycle (retention / aggregation) --------------------------------------
+
+    @Query("SELECT * FROM diagnostic_logs WHERE timestamp < :cutoffTimestamp ORDER BY timestamp ASC")
+    suspend fun getLogsOlderThan(cutoffTimestamp: Long): List<DiagnosticLogEntity>
+
+    @Query("DELETE FROM diagnostic_logs WHERE timestamp < :cutoffTimestamp")
+    suspend fun deleteLogsOlderThan(cutoffTimestamp: Long)
+
+    @Query("SELECT COUNT(*) FROM diagnostic_logs")
+    suspend fun getLogCount(): Int
 }

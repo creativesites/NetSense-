@@ -28,6 +28,7 @@ import com.netsense.netpulse.data.DiagnosticRepository
 import com.netsense.netpulse.data.NetPulseDatabase
 import com.netsense.netpulse.data.NetPulsePreferences
 import com.netsense.netpulse.data.TelemetryObservationEntity
+import com.netsense.netpulse.dataset.DataLifecycleManager
 import com.netsense.netpulse.dataset.DatasetExportFormat
 import com.netsense.netpulse.dataset.DatasetExportService
 import com.netsense.netpulse.dataset.LabelResolutionService
@@ -153,7 +154,21 @@ data class DashboardUiState(
     // Consumer redesign: real healing-in-progress state and the last resolved outcome, both
     // driven by RecoveryOutcomeTracker's real before/after validation - never a fake timer.
     val isHealing: Boolean = false,
-    val healingOutcome: HealingOutcome? = null
+    val healingOutcome: HealingOutcome? = null,
+
+    // Data lifecycle: real on-disk size and row counts for Settings' "Data & Storage" section -
+    // null until first computed (SettingsTabContent triggers that on first composition).
+    val dataStorageStats: DataStorageStats? = null
+)
+
+/** Real, measured storage figures - never an estimate - for the Settings "Data & Storage"
+ *  section, so a user (or reviewer) can actually see what retention settings are doing rather
+ *  than taking "the app manages storage" on faith. */
+data class DataStorageStats(
+    val databaseFileBytes: Long,
+    val diagnosticLogCount: Int,
+    val telemetryObservationCount: Int,
+    val dailyAggregateCount: Int
 )
 
 /** Result of the most recently resolved recovery attempt, for the Home screen's post-healing
@@ -218,6 +233,11 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
     private val sessionManager = NetworkSessionManager()
     private val labelResolutionService = LabelResolutionService(database.telemetryObservationDao())
     private val recoveryOutcomeTracker = RecoveryOutcomeTracker(database.recoveryOutcomeDao())
+    private val dataLifecycleManager = DataLifecycleManager(
+        database.diagnosticLogDao(),
+        database.telemetryObservationDao(),
+        database.dailyUsabilityAggregateDao()
+    )
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -795,6 +815,45 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
 
     fun updateDataSaverSetting(enabled: Boolean) {
         viewModelScope.launch { preferences.updateDataSaver(enabled) }
+    }
+
+    fun updateDiagnosticLogRetentionSetting(days: Int) {
+        viewModelScope.launch { preferences.updateDiagnosticLogRetentionDays(days) }
+    }
+
+    fun updateRawTelemetryRetentionSetting(days: Int) {
+        viewModelScope.launch { preferences.updateRawTelemetryRetentionDays(days) }
+    }
+
+    /** Real on-disk size and row counts, computed on demand rather than kept live - Settings
+     *  triggers this once when the Data & Storage section is shown, and again after a manual
+     *  purge, rather than recomputing on every telemetry tick for a number nobody's looking at. */
+    fun refreshDataStorageStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val dbFile = getApplication<Application>().getDatabasePath("netpulse_database.db")
+            val stats = DataStorageStats(
+                databaseFileBytes = if (dbFile.exists()) dbFile.length() else 0L,
+                diagnosticLogCount = database.diagnosticLogDao().getLogCount(),
+                telemetryObservationCount = database.telemetryObservationDao().getObservationCount(),
+                dailyAggregateCount = database.dailyUsabilityAggregateDao().getCount()
+            )
+            _uiState.update { it.copy(dataStorageStats = stats) }
+        }
+    }
+
+    /** Settings' manual "Clear old data now" action - runs the same aggregate/purge job the
+     *  Sentinel service runs automatically once a day, immediately, then refreshes the
+     *  displayed stats so the effect is visible right away. */
+    fun runDataMaintenanceNow() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = _uiState.value.appSettings
+            dataLifecycleManager.runMaintenance(
+                diagnosticRetentionDays = settings.diagnosticLogRetentionDays,
+                telemetryRetentionDays = settings.rawTelemetryRetentionDays
+            )
+            preferences.setLastDataPurgeTimestamp(System.currentTimeMillis())
+            refreshDataStorageStats()
+        }
     }
 
     fun completeOnboarding() {

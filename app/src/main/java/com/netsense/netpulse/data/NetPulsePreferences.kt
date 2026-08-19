@@ -20,7 +20,15 @@ data class AppSettings(
     val sentinelIntervalSeconds: Long = 45L,
     val preferredDnsProvider: String = "Google (8.8.8.8)",
     val dataSaverMode: Boolean = true,
-    val onboardingCompleted: Boolean = false
+    val onboardingCompleted: Boolean = false,
+    /** How long raw DiagnosticLogEntity rows are kept before being purged (already rolled
+     *  into a DailyUsabilityAggregateEntity by then, so long-range trends survive). */
+    val diagnosticLogRetentionDays: Int = 30,
+    /** How long raw ml_telemetry_observations rows are kept - shorter than diagnostic log
+     *  retention since this table is one row per telemetry tick (the ~14MB/day source),
+     *  not one row per user-visible probe. */
+    val rawTelemetryRetentionDays: Int = 14,
+    val lastDataPurgeTimestamp: Long = 0L
 )
 
 class NetPulsePreferences(private val context: Context) {
@@ -32,6 +40,9 @@ class NetPulsePreferences(private val context: Context) {
         val KEY_DNS_PROVIDER = stringPreferencesKey("preferred_dns_provider")
         val KEY_DATA_SAVER = booleanPreferencesKey("data_saver_mode")
         val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val KEY_DIAGNOSTIC_LOG_RETENTION_DAYS = intPreferencesKey("diagnostic_log_retention_days")
+        val KEY_RAW_TELEMETRY_RETENTION_DAYS = intPreferencesKey("raw_telemetry_retention_days")
+        val KEY_LAST_DATA_PURGE_TIMESTAMP = longPreferencesKey("last_data_purge_timestamp")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { preferences ->
@@ -41,7 +52,10 @@ class NetPulsePreferences(private val context: Context) {
             sentinelIntervalSeconds = preferences[KEY_SENTINEL_INTERVAL] ?: 45L,
             preferredDnsProvider = preferences[KEY_DNS_PROVIDER] ?: "Google (8.8.8.8)",
             dataSaverMode = preferences[KEY_DATA_SAVER] ?: true,
-            onboardingCompleted = preferences[KEY_ONBOARDING_COMPLETED] ?: false
+            onboardingCompleted = preferences[KEY_ONBOARDING_COMPLETED] ?: false,
+            diagnosticLogRetentionDays = preferences[KEY_DIAGNOSTIC_LOG_RETENTION_DAYS] ?: 30,
+            rawTelemetryRetentionDays = preferences[KEY_RAW_TELEMETRY_RETENTION_DAYS] ?: 14,
+            lastDataPurgeTimestamp = preferences[KEY_LAST_DATA_PURGE_TIMESTAMP] ?: 0L
         )
     }
 
@@ -78,6 +92,24 @@ class NetPulsePreferences(private val context: Context) {
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_ONBOARDING_COMPLETED] = completed
+        }
+    }
+
+    suspend fun updateDiagnosticLogRetentionDays(days: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_DIAGNOSTIC_LOG_RETENTION_DAYS] = days
+        }
+    }
+
+    suspend fun updateRawTelemetryRetentionDays(days: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_RAW_TELEMETRY_RETENTION_DAYS] = days
+        }
+    }
+
+    suspend fun setLastDataPurgeTimestamp(timestamp: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_LAST_DATA_PURGE_TIMESTAMP] = timestamp
         }
     }
 }

@@ -27,6 +27,20 @@ interface TelemetryObservationDao {
     @Query("DELETE FROM ml_telemetry_observations WHERE timestamp < :cutoffTimestamp")
     suspend fun purgeOlderThan(cutoffTimestamp: Long)
 
+    /**
+     * The retention-aware purge DataLifecycleManager actually calls: never deletes a row
+     * whose future-outcome labels are still UNRESOLVED (LabelResolver hasn't finished judging
+     * it yet), even if it's past the age cutoff - a row that's mid-resolution is exactly the
+     * data a purge must not destroy out from under it. In practice a row only stays UNRESOLVED
+     * for minutes (LabelResolver's lookahead windows are 15-30s, and a session is declared
+     * stale after 5 - so this exclusion is narrow, not a way to dodge retention indefinitely.
+     */
+    @Query(
+        "DELETE FROM ml_telemetry_observations WHERE timestamp < :cutoffTimestamp " +
+            "AND labelDegradation15sStatus != 'UNRESOLVED' AND labelDropout30sStatus != 'UNRESOLVED'"
+    )
+    suspend fun purgeExpiredResolved(cutoffTimestamp: Long)
+
     @Query("DELETE FROM ml_telemetry_observations")
     suspend fun clearAll()
 

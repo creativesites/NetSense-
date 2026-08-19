@@ -20,6 +20,8 @@ import com.netsense.netpulse.MainActivity
 import com.netsense.netpulse.connectivity.ConnectivityMonitor
 import com.netsense.netpulse.data.DiagnosticLogEntity
 import com.netsense.netpulse.data.NetPulseDatabase
+import com.netsense.netpulse.data.NetPulsePreferences
+import com.netsense.netpulse.dataset.DataLifecycleManager
 import com.netsense.netpulse.engine.DiagnosticEngine
 import com.netsense.netpulse.engine.UsabilityEngine
 import com.netsense.netpulse.model.CellularRfSnapshot
@@ -54,6 +56,8 @@ class NetPulseSentinelService : Service() {
     private lateinit var telephonyObserver: TelephonyObserver
     private val diagnosticEngine = DiagnosticEngine()
     private lateinit var database: NetPulseDatabase
+    private lateinit var preferences: NetPulsePreferences
+    private lateinit var dataLifecycleManager: DataLifecycleManager
 
     private var lastObservedZombie = false
     private var lastNotifiedTitle: String? = null
@@ -108,6 +112,12 @@ class NetPulseSentinelService : Service() {
         connectivityMonitor = ConnectivityMonitor(applicationContext)
         telephonyObserver = TelephonyObserver(applicationContext)
         database = NetPulseDatabase.getDatabase(applicationContext)
+        preferences = NetPulsePreferences(applicationContext)
+        dataLifecycleManager = DataLifecycleManager(
+            database.diagnosticLogDao(),
+            database.telemetryObservationDao(),
+            database.dailyUsabilityAggregateDao()
+        )
         createNotificationChannels()
     }
 
@@ -224,6 +234,8 @@ class NetPulseSentinelService : Service() {
                     )
                     database.diagnosticLogDao().insertLog(log)
 
+                    runDataMaintenanceIfDue()
+
                     // Trigger instant high-priority alert on transition to Zombie state
                     if (scoreResult.isZombieConnection && !lastObservedZombie) {
                         triggerZombieAlert(scoreResult.score, presentation.supportingText)
@@ -237,6 +249,29 @@ class NetPulseSentinelService : Service() {
                 // Sentinel interval: 45 seconds interval for low resource/battery impact
                 delay(45_000L)
             }
+        }
+    }
+
+    /**
+     * The Sentinel loop is the one thing reliably running in the background, so it's the
+     * natural home for the data lifecycle job - gated to actually do work at most once every
+     * 24h (tracked via NetPulsePreferences.lastDataPurgeTimestamp) rather than re-aggregating
+     * and re-scanning for purge candidates on every 45s tick.
+     */
+    private suspend fun runDataMaintenanceIfDue() {
+        val settings = preferences.settingsFlow.first()
+        val now = System.currentTimeMillis()
+        if (now - settings.lastDataPurgeTimestamp < 24 * 60 * 60 * 1000L) return
+        try {
+            dataLifecycleManager.runMaintenance(
+                diagnosticRetentionDays = settings.diagnosticLogRetentionDays,
+                telemetryRetentionDays = settings.rawTelemetryRetentionDays,
+                nowMs = now
+            )
+            preferences.setLastDataPurgeTimestamp(now)
+        } catch (e: Exception) {
+            // Never let a maintenance failure take down the sentinel loop - it'll retry on
+            // the next tick since lastDataPurgeTimestamp wasn't updated.
         }
     }
 
