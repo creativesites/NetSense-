@@ -305,9 +305,11 @@ private fun ConnectionHeroCard(
 }
 
 /**
- * A live elapsed-time readout with rotating micro-copy, so the (real, up to ~45s) wait for a
- * recovery attempt to settle reads as active progress rather than a frozen spinner. The
- * messages describe generic waiting states, never a fabricated specific outcome.
+ * A live elapsed-time readout with rotating, reassuring micro-copy, so the (real, up to ~20s)
+ * wait for a recovery attempt to settle reads as active progress rather than a frozen spinner
+ * or a stressful countdown. The messages describe generic waiting states, never a fabricated
+ * specific outcome - this app is being deliberately calm about something that's often
+ * frustrating for the person watching it.
  */
 @Composable
 private fun HealingProgressTicker() {
@@ -319,8 +321,12 @@ private fun HealingProgressTicker() {
             delay(1000)
         }
     }
-    val messages = listOf("Waiting for the radio to reconnect", "Checking your connection", "Almost there")
-    val message = messages[(elapsedSec / 8).coerceAtMost(messages.size - 1)]
+    val messages = listOf(
+        "Reconnecting your radio - this won't take long",
+        "Verifying your Internet is actually back",
+        "Almost there"
+    )
+    val message = messages[(elapsedSec / 7).coerceAtMost(messages.size - 1)]
     Text(
         text = "$message · ${elapsedSec}s",
         style = MaterialTheme.typography.labelMedium,
