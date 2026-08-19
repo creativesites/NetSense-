@@ -11,12 +11,14 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.location.LocationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Flight
@@ -96,6 +99,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +108,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.netsense.netpulse.BuildConfig
+import com.netsense.netpulse.R
 import com.netsense.netpulse.ai.mind.PulseMindExplanation
 import com.netsense.netpulse.ai.predictor.PredictorBenchmarkResult
 import com.netsense.netpulse.ai.predictor.PredictorState
@@ -186,6 +192,10 @@ fun NetPulseDashboard(
     onRunBenchmark: () -> Unit = {},
     onConsultAi: (String) -> Unit = {},
     onClearAiConsultation: () -> Unit = {},
+    onRefreshDataStorageStats: () -> Unit = {},
+    onUpdateDiagnosticLogRetention: (Int) -> Unit = {},
+    onUpdateRawTelemetryRetention: (Int) -> Unit = {},
+    onClearOldDataNow: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -262,20 +272,14 @@ fun NetPulseDashboard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 4.dp)
                     ) {
-                        Box(
+                        Image(
+                            painter = painterResource(R.drawable.ic_launcher_netpulse),
+                            contentDescription = "NetPulse",
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(NetPulseAccent),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.NetworkCheck,
-                                contentDescription = "NetPulse Logo",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
@@ -420,7 +424,12 @@ fun NetPulseDashboard(
                         onUpdateAlertThreshold = onUpdateAlertThreshold,
                         onUpdateSentinelInterval = onUpdateSentinelInterval,
                         onUpdateDnsProvider = onUpdateDnsProvider,
-                        onUpdateDataSaver = onUpdateDataSaver
+                        onUpdateDataSaver = onUpdateDataSaver,
+                        dataStorageStats = uiState.dataStorageStats,
+                        onRefreshDataStorageStats = onRefreshDataStorageStats,
+                        onUpdateDiagnosticLogRetention = onUpdateDiagnosticLogRetention,
+                        onUpdateRawTelemetryRetention = onUpdateRawTelemetryRetention,
+                        onClearOldDataNow = onClearOldDataNow
                     )
                 }
             }
@@ -2587,7 +2596,12 @@ fun SettingsTabContent(
     onUpdateAlertThreshold: (Int) -> Unit,
     onUpdateSentinelInterval: (Long) -> Unit,
     onUpdateDnsProvider: (String) -> Unit,
-    onUpdateDataSaver: (Boolean) -> Unit
+    onUpdateDataSaver: (Boolean) -> Unit,
+    dataStorageStats: DataStorageStats?,
+    onRefreshDataStorageStats: () -> Unit,
+    onUpdateDiagnosticLogRetention: (Int) -> Unit,
+    onUpdateRawTelemetryRetention: (Int) -> Unit,
+    onClearOldDataNow: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -2820,6 +2834,133 @@ fun SettingsTabContent(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Data & Storage Card - real, measured figures (never an estimate) so a user can see
+        // what retention is actually doing instead of taking "the app manages storage" on faith.
+        item {
+            LaunchedEffect(Unit) { onRefreshDataStorageStats() }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("data_storage_card"),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
+                border = CardDefaults.outlinedCardBorder().copy(
+                    brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Data & Storage",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = NetPulseTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "NetPulse keeps only real, measured history - aggregated and purged automatically once a day, never fabricated.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NetPulseTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val stats = dataStorageStats
+                    if (stats != null) {
+                        val sizeLabel = when {
+                            stats.databaseFileBytes >= 1_000_000 -> String.format(Locale.US, "%.1f MB", stats.databaseFileBytes / 1_000_000.0)
+                            else -> String.format(Locale.US, "%.0f KB", stats.databaseFileBytes / 1_000.0)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MinimalistMetricPill(label = "On-Device Size", value = sizeLabel, isSuccess = true, modifier = Modifier.weight(1f))
+                            MinimalistMetricPill(label = "Diagnostic Rows", value = "${stats.diagnosticLogCount}", isSuccess = true, modifier = Modifier.weight(1f))
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MinimalistMetricPill(label = "Raw ML Rows", value = "${stats.telemetryObservationCount}", isSuccess = true, modifier = Modifier.weight(1f))
+                            MinimalistMetricPill(label = "Daily Summaries", value = "${stats.dailyAggregateCount}", isSuccess = true, modifier = Modifier.weight(1f))
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+
+                    HorizontalDivider(color = NetPulseBorderSubtle)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Keep Diagnostic History For",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = NetPulseTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(7, 14, 30, 60).forEach { days ->
+                            val isSelected = appSettings.diagnosticLogRetentionDays == days
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) NetPulseAccent else NetPulseSurfaceVariant,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onUpdateDiagnosticLogRetention(days) }
+                            ) {
+                                Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "${days}d",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else NetPulseTextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Keep Raw ML Training Data For",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = NetPulseTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(3, 7, 14, 30).forEach { days ->
+                            val isSelected = appSettings.rawTelemetryRetentionDays == days
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) NetPulseAccent else NetPulseSurfaceVariant,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onUpdateRawTelemetryRetention(days) }
+                            ) {
+                                Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = "${days}d",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else NetPulseTextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedButton(
+                        onClick = onClearOldDataNow,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("clear_old_data_now_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Clean Up Old Data Now", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

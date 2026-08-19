@@ -1,5 +1,6 @@
 package com.netsense.netpulse.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,11 +38,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.netsense.netpulse.R
 import com.netsense.netpulse.ui.theme.NetPulseAccent
 import com.netsense.netpulse.ui.theme.NetPulseAccentContainer
 import com.netsense.netpulse.ui.theme.NetPulseBg
@@ -115,19 +119,33 @@ fun OnboardingScreen(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(84.dp)
-                        .clip(CircleShape)
-                        .background(NetPulseAccentContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = step.icon,
-                        contentDescription = null,
-                        tint = NetPulseOnAccentContainer,
-                        modifier = Modifier.size(40.dp)
+                if (stepIndex == 0) {
+                    // The real app icon on the welcome step - every later step keeps its own
+                    // contextual vector icon (signal, cell tower, security), but this is the
+                    // one place onboarding should actually show the NetPulse brand mark.
+                    Image(
+                        painter = painterResource(R.drawable.ic_launcher_netpulse),
+                        contentDescription = "NetPulse",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(84.dp)
+                            .clip(CircleShape)
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(84.dp)
+                            .clip(CircleShape)
+                            .background(NetPulseAccentContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = step.icon,
+                            contentDescription = null,
+                            tint = NetPulseOnAccentContainer,
+                            modifier = Modifier.size(40.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(28.dp))
