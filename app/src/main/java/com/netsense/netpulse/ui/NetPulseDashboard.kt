@@ -2572,10 +2572,13 @@ fun DiagnosticLogItemCard(log: DiagnosticLogEntity, onDelete: () -> Unit) {
                 }
             }
 
-            IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+            // The 28dp size here used to apply to the IconButton itself, shrinking its tappable
+            // area below Android's 48dp minimum touch target - now it only sizes the icon glyph,
+            // while the button keeps its default 48dp touch target.
+            IconButton(onClick = onDelete) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete",
+                    contentDescription = "Delete this diagnostic log entry",
                     tint = NetPulseTextTertiary,
                     modifier = Modifier.size(16.dp)
                 )
