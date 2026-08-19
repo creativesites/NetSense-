@@ -4,6 +4,7 @@ import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.ConnectionVisual
 import com.netsense.netpulse.model.NetworkSnapshot
 import com.netsense.netpulse.model.NetworkTransport
+import com.netsense.netpulse.model.NoConnectivityReason
 import com.netsense.netpulse.model.ProductStatus
 import com.netsense.netpulse.model.UsabilityRating
 import com.netsense.netpulse.model.UsabilityScoreResult
@@ -87,6 +88,52 @@ class ConnectionPresentationMapperTest {
         assertFalse(recovered.showFixAction)
         assertEquals(ConnectionVisual.RECOVERING, recovering.visual)
         assertEquals(ConnectionVisual.RECOVERED, recovered.visual)
+    }
+
+    @Test
+    fun `UNAVAILABLE distinguishes airplane mode, single-radio-off, both-off, and no-signal`() {
+        val disconnected = snapshot.copy(isConnected = false, activeTransports = emptySet())
+
+        val airplane = ConnectionPresentationMapper.map(
+            ProductStatus.UNAVAILABLE, disconnected.copy(noConnectivityReason = NoConnectivityReason.AIRPLANE_MODE), score
+        )
+        assertEquals("Airplane mode is on", airplane.statusLine)
+
+        val wifiOff = ConnectionPresentationMapper.map(
+            ProductStatus.UNAVAILABLE, disconnected.copy(noConnectivityReason = NoConnectivityReason.WIFI_OFF), score
+        )
+        assertEquals("Wi-Fi is turned off", wifiOff.statusLine)
+
+        val dataOff = ConnectionPresentationMapper.map(
+            ProductStatus.UNAVAILABLE, disconnected.copy(noConnectivityReason = NoConnectivityReason.CELLULAR_DATA_OFF), score
+        )
+        assertEquals("Mobile data is turned off", dataOff.statusLine)
+
+        val bothOff = ConnectionPresentationMapper.map(
+            ProductStatus.UNAVAILABLE, disconnected.copy(noConnectivityReason = NoConnectivityReason.WIFI_AND_DATA_OFF), score
+        )
+        assertEquals("Wi-Fi and mobile data are off", bothOff.statusLine)
+
+        val noSignal = ConnectionPresentationMapper.map(
+            ProductStatus.UNAVAILABLE, disconnected.copy(noConnectivityReason = NoConnectivityReason.NO_SIGNAL), score
+        )
+        assertEquals("No network detected", noSignal.statusLine)
+
+        // Every one of these must still be an offline (not fabricated online) visual.
+        for (p in listOf(airplane, wifiOff, dataOff, bothOff, noSignal)) {
+            assertEquals(ConnectionVisual.OFFLINE, p.visual)
+            assertFalse(p.showFixAction)
+        }
+    }
+
+    @Test
+    fun `NO_INTERNET over Wi-Fi uses Wi-Fi-specific copy, not the generic network phrasing`() {
+        val wifiSnapshot = snapshot.copy(
+            primaryTransport = NetworkTransport.WIFI,
+            activeTransports = setOf(NetworkTransport.WIFI)
+        )
+        val presentation = ConnectionPresentationMapper.map(ProductStatus.NO_INTERNET, wifiSnapshot, score)
+        assertEquals("Wi-Fi is connected, but Internet access isn't working.", presentation.supportingText)
     }
 
     @Test

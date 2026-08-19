@@ -58,10 +58,13 @@ object ConnectionPresentationMapper {
             )
             ProductStatus.NO_INTERNET -> ConnectionPresentation(
                 headline = "No Internet",
-                supportingText = if (hasStrongSignal) {
-                    "Your phone has a strong signal, but Internet traffic isn't getting through."
-                } else {
-                    "Your phone is connected, but Internet traffic isn't getting through."
+                supportingText = when {
+                    snapshot.primaryTransport == NetworkTransport.WIFI ->
+                        "Wi-Fi is connected, but Internet access isn't working."
+                    hasStrongSignal ->
+                        "You're connected to the network, but there's no Internet - even though your phone has a strong signal."
+                    else ->
+                        "You're connected to the network, but there's no Internet."
                 },
                 statusLine = "No Internet connection",
                 showFixAction = true,
@@ -78,7 +81,7 @@ object ConnectionPresentationMapper {
             )
             ProductStatus.CAPTIVE_PORTAL -> ConnectionPresentation(
                 headline = "Sign-In Required",
-                supportingText = "This network needs you to sign in before you can use the Internet.",
+                supportingText = "Sign-in may be required before this network will let you use the Internet.",
                 statusLine = "Sign-in required",
                 showFixAction = true,
                 fixActionLabel = "Sign In",
@@ -93,9 +96,9 @@ object ConnectionPresentationMapper {
                 visual = ConnectionVisual.SEARCHING
             )
             ProductStatus.CHECKING -> ConnectionPresentation(
-                headline = "Checking your connection",
+                headline = "Checking your connection…",
                 supportingText = "Verifying your Internet connection.",
-                statusLine = "Checking connection",
+                statusLine = "Checking your connection…",
                 showFixAction = false,
                 fixActionLabel = "",
                 visual = ConnectionVisual.SEARCHING
@@ -116,14 +119,57 @@ object ConnectionPresentationMapper {
                 fixActionLabel = "",
                 visual = ConnectionVisual.RECOVERED
             )
-            ProductStatus.UNAVAILABLE -> ConnectionPresentation(
+            ProductStatus.UNAVAILABLE -> unavailablePresentation(snapshot.noConnectivityReason)
+        }
+    }
+
+    /**
+     * ProductStatus.UNAVAILABLE covers every "no transport at all" case, but the *reason* the
+     * user is offline determines what they should actually go do about it - so this branches
+     * on [NoConnectivityReason] rather than showing one generic "no connection" message for
+     * airplane mode, both radios off, one radio off, and no-signal alike.
+     */
+    private fun unavailablePresentation(reason: NoConnectivityReason?): ConnectionPresentation =
+        when (reason) {
+            NoConnectivityReason.AIRPLANE_MODE -> ConnectionPresentation(
+                headline = "Airplane Mode Is On",
+                supportingText = "Airplane mode is on, so Wi-Fi and mobile data are both switched off.",
+                statusLine = "Airplane mode is on",
+                showFixAction = false,
+                fixActionLabel = "",
+                visual = ConnectionVisual.OFFLINE
+            )
+            NoConnectivityReason.WIFI_AND_DATA_OFF -> ConnectionPresentation(
                 headline = "No Internet Connection",
+                supportingText = "Wi-Fi and mobile data are both turned off.",
+                statusLine = "Wi-Fi and mobile data are off",
+                showFixAction = false,
+                fixActionLabel = "",
+                visual = ConnectionVisual.OFFLINE
+            )
+            NoConnectivityReason.WIFI_OFF -> ConnectionPresentation(
+                headline = "Wi-Fi Is Off",
+                supportingText = "Wi-Fi is turned off, and mobile data isn't reaching the Internet right now.",
+                statusLine = "Wi-Fi is turned off",
+                showFixAction = false,
+                fixActionLabel = "",
+                visual = ConnectionVisual.OFFLINE
+            )
+            NoConnectivityReason.CELLULAR_DATA_OFF -> ConnectionPresentation(
+                headline = "Mobile Data Is Off",
+                supportingText = "Mobile data is turned off, and Wi-Fi isn't reaching the Internet right now.",
+                statusLine = "Mobile data is turned off",
+                showFixAction = false,
+                fixActionLabel = "",
+                visual = ConnectionVisual.OFFLINE
+            )
+            NoConnectivityReason.NO_SIGNAL, null -> ConnectionPresentation(
+                headline = "No Network Detected",
                 supportingText = "Your device isn't connected to Wi-Fi or cellular data.",
-                statusLine = "No connection",
+                statusLine = "No network detected",
                 showFixAction = false,
                 fixActionLabel = "",
                 visual = ConnectionVisual.OFFLINE
             )
         }
-    }
 }

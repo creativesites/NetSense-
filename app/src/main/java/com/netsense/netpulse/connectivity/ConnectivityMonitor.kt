@@ -6,9 +6,15 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.provider.Settings
+import android.telephony.TelephonyManager
 import com.netsense.netpulse.model.NetworkClassification
 import com.netsense.netpulse.model.NetworkSnapshot
 import com.netsense.netpulse.model.NetworkTransport
+import com.netsense.netpulse.model.NoConnectivityReason
+import com.netsense.netpulse.model.determineNoConnectivityReason
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -17,6 +23,36 @@ class ConnectivityMonitor(private val context: Context) {
 
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    private fun isAirplaneModeOn(): Boolean = try {
+        Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun isWifiEnabled(): Boolean = try {
+        val wifiManager = context.applicationContext
+            .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wifiManager?.isWifiEnabled ?: true
+    } catch (e: Exception) {
+        true
+    }
+
+    /**
+     * Whether the user has mobile data switched on. TelephonyManager.isDataEnabled() is only
+     * public from API 28 - below that there's no reliable, permission-free way to read this
+     * toggle, so this defaults to "enabled" on API 26/27 rather than guessing it's off.
+     */
+    private fun isCellularDataEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return true
+        return try {
+            val telephonyManager = context.applicationContext
+                .getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            telephonyManager?.isDataEnabled ?: true
+        } catch (e: Exception) {
+            true
+        }
+    }
 
     fun observeNetwork(): Flow<NetworkSnapshot> = callbackFlow {
         var currentNetwork: Network? = connectivityManager.activeNetwork
@@ -31,13 +67,20 @@ class ConnectivityMonitor(private val context: Context) {
             val link = currentLinkProperties
 
             if (net == null || caps == null) {
+                val reason = determineNoConnectivityReason(
+                    isAirplaneModeOn = isAirplaneModeOn(),
+                    isWifiEnabled = isWifiEnabled(),
+                    isCellularDataEnabled = isCellularDataEnabled()
+                )
                 trySend(
                     NetworkSnapshot(
                         isConnected = false,
                         isValidated = false,
                         primaryTransport = NetworkTransport.NONE,
                         activeTransports = emptySet(),
-                        classification = NetworkClassification.NO_NETWORK
+                        isAirplaneModeOn = reason == NoConnectivityReason.AIRPLANE_MODE,
+                        classification = NetworkClassification.NO_NETWORK,
+                        noConnectivityReason = reason
                     )
                 )
                 return

@@ -77,6 +77,13 @@ class NetPulseSentinelService : Service() {
          *  recovering) prompted the notification, without needing per-state deep links. */
         const val EXTRA_OPEN_HOME = "open_home"
 
+        /** Set on the notification's "Heal Now" action intent. MainActivity reads this and
+         *  immediately calls the same viewModel.fixIt() the Home screen's Fix It button uses -
+         *  Android gives apps no way to toggle airplane mode / Wi-Fi / open a captive portal
+         *  without an Activity in the loop, so this can't act silently in the background; it
+         *  saves the user the trip of opening the app and finding the button themselves. */
+        const val EXTRA_HEAL_NOW = "heal_now"
+
         fun startService(context: Context) {
             val intent = Intent(context, NetPulseSentinelService::class.java).apply {
                 action = ACTION_START
@@ -175,7 +182,18 @@ class NetPulseSentinelService : Service() {
                     } else {
                         scoreResult.primaryDiagnosis
                     }
-                    updateOngoingNotification(scoreResult.score, notifTitle, notifText, openHome = status != ProductStatus.ONLINE)
+                    // Reuses the exact same showFixAction/fixActionLabel Home already computed
+                    // from this same presentation - the notification's Heal Now button can
+                    // never appear in a state where Home wouldn't also show Fix It.
+                    val canHealNow = presentation.showFixAction && !isRecoveryPending
+                    updateOngoingNotification(
+                        score = scoreResult.score,
+                        title = notifTitle,
+                        message = notifText,
+                        openHome = status != ProductStatus.ONLINE,
+                        canHealNow = canHealNow,
+                        healActionLabel = presentation.fixActionLabel
+                    )
 
                     // Persist record into Room Database
                     val log = DiagnosticLogEntity(
@@ -255,7 +273,14 @@ class NetPulseSentinelService : Service() {
         }
     }
 
-    private fun buildOngoingNotification(score: Int?, title: String, message: String, openHome: Boolean = false): Notification {
+    private fun buildOngoingNotification(
+        score: Int?,
+        title: String,
+        message: String,
+        openHome: Boolean = false,
+        canHealNow: Boolean = false,
+        healActionLabel: String = "Fix It"
+    ): Notification {
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             if (openHome) putExtra(EXTRA_OPEN_HOME, true)
         }
@@ -266,25 +291,53 @@ class NetPulseSentinelService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(message)
             .setSmallIcon(scoreStatusBarIcon(score))
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
+            // The score is not sensitive, so show the full notification on the lock screen
+            // instead of Android's default "hidden" redaction - this is the value the user
+            // said they most want visible without unlocking the phone.
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+
+        if (canHealNow) {
+            val healIntent = Intent(this, MainActivity::class.java).apply {
+                putExtra(EXTRA_OPEN_HOME, true)
+                putExtra(EXTRA_HEAL_NOW, true)
+            }
+            // A distinct request code from the content intent (0) so FLAG_UPDATE_CURRENT
+            // doesn't overwrite one PendingIntent's extras with the other's.
+            val healPendingIntent = PendingIntent.getActivity(
+                this,
+                1,
+                healIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(0, healActionLabel, healPendingIntent)
+        }
+
+        return builder.build()
     }
 
     /** Skips re-posting when nothing user-visible actually changed, so the notification
      *  doesn't churn every 45s while the connection is quietly healthy (Section 17: "do not
      *  create notification spam"). */
-    private fun updateOngoingNotification(score: Int, title: String, message: String, openHome: Boolean = false) {
+    private fun updateOngoingNotification(
+        score: Int,
+        title: String,
+        message: String,
+        openHome: Boolean = false,
+        canHealNow: Boolean = false,
+        healActionLabel: String = "Fix It"
+    ) {
         if (title == lastNotifiedTitle && message == lastNotifiedText) return
         lastNotifiedTitle = title
         lastNotifiedText = message
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildOngoingNotification(score, title, message, openHome))
+        manager.notify(NOTIFICATION_ID, buildOngoingNotification(score, title, message, openHome, canHealNow, healActionLabel))
     }
 
     private fun triggerZombieAlert(score: Int, message: String) {
@@ -305,6 +358,13 @@ class NetPulseSentinelService : Service() {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // This is a one-shot heads-up alert on top of the always-present ongoing
+            // notification, which already updates to show the same bad score the moment this
+            // fires - without a timeout the two would sit stacked in the shade indefinitely,
+            // showing the same information twice. Self-clearing after 20s keeps its job to
+            // "interrupt once" without leaving a second, redundant card behind.
+            .setTimeoutAfter(20_000L)
             .build()
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

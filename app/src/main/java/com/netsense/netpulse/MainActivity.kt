@@ -49,6 +49,13 @@ class MainActivity : ComponentActivity() {
                     if (intent?.getBooleanExtra(NetPulseSentinelService.EXTRA_OPEN_HOME, false) == true) {
                         viewModel.setPrimaryTab(PrimaryTab.HOME)
                     }
+                    // The notification's "Heal Now" action - land on Home already mid-fix,
+                    // via the exact same fixIt() path as the Home screen's own button, rather
+                    // than a separate remediation path that could drift out of sync with it.
+                    if (intent?.getBooleanExtra(NetPulseSentinelService.EXTRA_HEAL_NOW, false) == true) {
+                        intent.removeExtra(NetPulseSentinelService.EXTRA_HEAL_NOW)
+                        viewModel.fixIt(this@MainActivity)
+                    }
                 }
 
                 LaunchedEffect(Unit) {

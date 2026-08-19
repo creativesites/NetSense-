@@ -43,6 +43,46 @@ enum class NetworkClassification(val label: String, val shortDescription: String
     )
 }
 
+/**
+ * Why the device currently has no network transport at all (snapshot.isConnected == false).
+ * Distinguishes the handful of causes a user can actually act on from each other, instead of
+ * collapsing them into one generic "no connection" message - matching what Android's own
+ * Settings > Internet page already tells the user, so NetPulse never contradicts it.
+ */
+enum class NoConnectivityReason {
+    /** Settings.Global.AIRPLANE_MODE_ON is set - takes priority over every other reason. */
+    AIRPLANE_MODE,
+
+    /** Both the Wi-Fi radio and mobile data are switched off by the user. */
+    WIFI_AND_DATA_OFF,
+
+    /** Wi-Fi is switched off; cellular data is on but not currently providing a connection. */
+    WIFI_OFF,
+
+    /** Mobile data is switched off; Wi-Fi is on but not currently providing a connection. */
+    CELLULAR_DATA_OFF,
+
+    /** Both radios are enabled but neither is actually connected - out of range, no SIM, etc. */
+    NO_SIGNAL
+}
+
+/**
+ * Pure decision table for [NoConnectivityReason] - takes the three independent Android toggle
+ * states and orders them by how actionable they are. No Android APIs here so it's trivially
+ * unit-testable; ConnectivityMonitor is the only caller and supplies the real toggle reads.
+ */
+fun determineNoConnectivityReason(
+    isAirplaneModeOn: Boolean,
+    isWifiEnabled: Boolean,
+    isCellularDataEnabled: Boolean
+): NoConnectivityReason = when {
+    isAirplaneModeOn -> NoConnectivityReason.AIRPLANE_MODE
+    !isWifiEnabled && !isCellularDataEnabled -> NoConnectivityReason.WIFI_AND_DATA_OFF
+    !isWifiEnabled -> NoConnectivityReason.WIFI_OFF
+    !isCellularDataEnabled -> NoConnectivityReason.CELLULAR_DATA_OFF
+    else -> NoConnectivityReason.NO_SIGNAL
+}
+
 enum class UsabilityRating(val label: String, val minScore: Int, val maxScore: Int) {
     OPTIMAL("Optimal", 85, 100),
     GOOD("Good", 60, 84),
@@ -123,5 +163,7 @@ data class NetworkSnapshot(
     val signalLevel: Int? = null, // 0..4
     val signalDbm: Int? = null,
     val isAirplaneModeOn: Boolean = false,
-    val classification: NetworkClassification = NetworkClassification.NO_NETWORK
+    val classification: NetworkClassification = NetworkClassification.NO_NETWORK,
+    /** Only meaningful when [isConnected] is false; null while connected. */
+    val noConnectivityReason: NoConnectivityReason? = null
 )
