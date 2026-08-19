@@ -97,6 +97,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1455,6 +1456,9 @@ fun MinimalistQuickProbeSummary(
             Spacer(modifier = Modifier.height(12.dp))
 
             if (probeResult != null) {
+                // 2-per-row, same fix as the Analytics KPI grid - 4 equal-weight pills crammed
+                // into one Row left each one too narrow for its label ("HTTP 204", "TCP RTT"),
+                // wrapping into the tall, narrow strip this whole audit pass is fixing.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1471,6 +1475,12 @@ fun MinimalistQuickProbeSummary(
                         isSuccess = probeResult.overallTcpSuccess,
                         modifier = Modifier.weight(1f)
                     )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     MinimalistMetricPill(
                         label = "HTTP 204",
                         value = if (probeResult.overallHttpSuccess) "${probeResult.averageHttpMs}ms" else "FAIL",
@@ -1667,17 +1677,26 @@ fun DiagnosticsTabContent(
                                     modifier = Modifier.padding(8.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
+                                    // Three equal-weight columns leaves each one too narrow for
+                                    // "Standard Probe"/"Deep Diagnostic" on one line - without a
+                                    // cap they wrap, turning the button into the same tall,
+                                    // narrow vertical bar this whole audit pass is fixing.
                                     Text(
                                         text = mode.title,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else NetPulseTextPrimary
+                                        color = if (isSelected) Color.White else NetPulseTextPrimary,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "~${mode.estimatedPayloadKb} KB",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontSize = 10.sp,
-                                        color = if (isSelected) Color.White.copy(alpha = 0.8f) else NetPulseTextTertiary
+                                        color = if (isSelected) Color.White.copy(alpha = 0.8f) else NetPulseTextTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
