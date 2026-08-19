@@ -23,15 +23,17 @@ import com.netsense.netpulse.data.NetPulseDatabase
 import com.netsense.netpulse.data.NetPulsePreferences
 import com.netsense.netpulse.dataset.DataLifecycleManager
 import com.netsense.netpulse.engine.DiagnosticEngine
+import com.netsense.netpulse.engine.RadarEngine
 import com.netsense.netpulse.engine.UsabilityEngine
-import com.netsense.netpulse.model.CellularRfSnapshot
 import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.DiagnosticMode
 import com.netsense.netpulse.model.NetworkSnapshot
 import com.netsense.netpulse.model.ProductStatus
 import com.netsense.netpulse.model.ProductStatusMapper
 import com.netsense.netpulse.model.UsabilityRating
-import com.netsense.netpulse.model.WifiRadarSnapshot
+import com.netsense.netpulse.state.AuthoritativeNetworkState
+import com.netsense.netpulse.state.NetworkStateStore
+import com.netsense.netpulse.state.StateSource
 import com.netsense.netpulse.telephony.TelephonyObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +56,7 @@ class NetPulseSentinelService : Service() {
 
     private lateinit var connectivityMonitor: ConnectivityMonitor
     private lateinit var telephonyObserver: TelephonyObserver
+    private lateinit var radarEngine: RadarEngine
     private val diagnosticEngine = DiagnosticEngine()
     private lateinit var database: NetPulseDatabase
     private lateinit var preferences: NetPulsePreferences
@@ -111,6 +114,7 @@ class NetPulseSentinelService : Service() {
         super.onCreate()
         connectivityMonitor = ConnectivityMonitor(applicationContext)
         telephonyObserver = TelephonyObserver(applicationContext)
+        radarEngine = RadarEngine(applicationContext)
         database = NetPulseDatabase.getDatabase(applicationContext)
         preferences = NetPulsePreferences(applicationContext)
         dataLifecycleManager = DataLifecycleManager(
@@ -162,6 +166,13 @@ class NetPulseSentinelService : Service() {
                     val scoreResult = UsabilityEngine.calculateScore(enrichedSnapshot, probe)
                     val classification = UsabilityEngine.classify(enrichedSnapshot, scoreResult)
 
+                    // Real Wi-Fi/cellular RF telemetry, same RadarEngine call the foreground
+                    // ViewModel uses - not the empty placeholder snapshots this used to pass,
+                    // which could make WEAK_SIGNAL detection disagree with what Home shows for
+                    // the exact same radio condition.
+                    val wifiRadar = radarEngine.getWifiRadarSnapshot(enrichedSnapshot)
+                    val cellularRf = radarEngine.getCellularRfSnapshot(enrichedSnapshot, telSnapshot)
+
                     // A recovery attempt may currently be in progress from the foreground app
                     // (Home's Fix It, or a manual Advanced Healer action) - reuse the same
                     // RecoveryOutcomeDao truth the ViewModel does so the notification never
@@ -171,38 +182,58 @@ class NetPulseSentinelService : Service() {
                         snapshot = enrichedSnapshot,
                         scoreResult = scoreResult,
                         classification = classification,
-                        wifiRadar = WifiRadarSnapshot(),
-                        cellularRf = CellularRfSnapshot(),
+                        wifiRadar = wifiRadar,
+                        cellularRf = cellularRf,
                         isProbing = false,
                         isRecoveryPending = isRecoveryPending
                     )
                     val presentation = ConnectionPresentationMapper.map(status, enrichedSnapshot, scoreResult)
 
+                    // Single source of truth (Trust pass, Section 1): publish this probe into
+                    // the same process-wide store the foreground ViewModel publishes into, then
+                    // render the notification from whatever the store now holds - almost always
+                    // this exact reading, but if Home published something even fresher in this
+                    // same instant, the notification shows that instead of a value it's already
+                    // one tick behind on. This is what guarantees Home and this notification can
+                    // never show two different numbers for "right now".
+                    val myReading = AuthoritativeNetworkState(
+                        scoreResult = scoreResult,
+                        classification = classification,
+                        status = status,
+                        snapshot = enrichedSnapshot,
+                        presentation = presentation,
+                        isRecoveryPending = isRecoveryPending,
+                        timestampMs = System.currentTimeMillis(),
+                        source = StateSource.SENTINEL_PROBE
+                    )
+                    NetworkStateStore.publish(myReading)
+                    val effective = NetworkStateStore.state.value ?: myReading
+
                     // The score number is the whole point of this notification - it's what
                     // lets a user judge "how good" at a glance instead of just "good or bad".
                     // The subtitle carries the same informative diagnosis PulseCore already
                     // computed (unchanged from what used to show here), not a vaguer rewrite.
-                    val notifTitle = "${scoreResult.score}/100 · ${scoreResult.rating.label}"
-                    val notifText = if (status == ProductStatus.ONLINE) {
-                        listOfNotNull(enrichedSnapshot.carrierName, enrichedSnapshot.cellularDataNetworkType)
+                    val notifTitle = "${effective.scoreResult.score}/100 · ${effective.scoreResult.rating.label}"
+                    val notifText = if (effective.status == ProductStatus.ONLINE) {
+                        listOfNotNull(effective.snapshot.carrierName, effective.snapshot.cellularDataNetworkType)
                             .joinToString(" · ")
                             .ifBlank { "NetPulse is monitoring your connection" }
-                    } else if (isRecoveryPending) {
-                        "NetPulse is working on it - ${scoreResult.primaryDiagnosis}"
+                    } else if (effective.isRecoveryPending) {
+                        "NetPulse is working on it - ${effective.scoreResult.primaryDiagnosis}"
                     } else {
-                        scoreResult.primaryDiagnosis
+                        effective.scoreResult.primaryDiagnosis
                     }
                     // Reuses the exact same showFixAction/fixActionLabel Home already computed
                     // from this same presentation - the notification's Heal Now button can
                     // never appear in a state where Home wouldn't also show Fix It.
-                    val canHealNow = presentation.showFixAction && !isRecoveryPending
+                    val canHealNow = effective.presentation.showFixAction && !effective.isRecoveryPending
                     updateOngoingNotification(
-                        score = scoreResult.score,
+                        score = effective.scoreResult.score,
                         title = notifTitle,
                         message = notifText,
-                        openHome = status != ProductStatus.ONLINE,
+                        openHome = effective.status != ProductStatus.ONLINE,
                         canHealNow = canHealNow,
-                        healActionLabel = presentation.fixActionLabel
+                        healActionLabel = effective.presentation.fixActionLabel
                     )
 
                     // Persist record into Room Database

@@ -31,11 +31,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -818,9 +821,10 @@ private fun CopilotAnswerSection(
     label: String,
     icon: ImageVector,
     accentColor: Color,
-    body: String
+    body: String,
+    modifier: Modifier = Modifier
 ) {
-    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+    Row(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         Box(
             modifier = Modifier
                 .width(3.dp)
@@ -1050,10 +1054,18 @@ fun AiDashboardCopilotCard(
                     border = CardDefaults.outlinedCardBorder().copy(
                         brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    // Bounded rather than growing without limit: a short answer sizes naturally
+                    // to its content, a long one gets its own internal scroll instead of pushing
+                    // everything below it (or the screen's own scroll) arbitrarily far down.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 340.dp)
+                        .testTag("ai_copilot_response_card")
                 ) {
                     Column(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
@@ -1132,14 +1144,16 @@ fun AiDashboardCopilotCard(
                                     label = "WHAT I RECOMMEND",
                                     icon = Icons.Default.TipsAndUpdates,
                                     accentColor = StatusOptimal,
-                                    body = structured.recommendation
+                                    body = structured.recommendation,
+                                    modifier = Modifier.testTag("ai_copilot_response_text")
                                 )
                             } else {
                                 Text(
                                     text = consultation.response,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = NetPulseTextPrimary,
-                                    lineHeight = 20.sp
+                                    lineHeight = 20.sp,
+                                    modifier = Modifier.testTag("ai_copilot_response_text")
                                 )
                             }
                         }

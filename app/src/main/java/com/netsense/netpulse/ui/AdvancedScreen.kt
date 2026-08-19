@@ -15,10 +15,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
@@ -183,13 +186,24 @@ fun AdvancedScreen(
                     )
                 }
                 DashboardTab.COPILOT -> {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    // This tab's own content (prompt chips, query field, and the - already
+                    // internally bounded/scrollable - response card) needs to scroll as a whole
+                    // too: on a small screen or with large system font scaling, chips + input +
+                    // a tall response together can still exceed the space AdvancedScreen leaves
+                    // below its fixed header, and this Column previously had no scroll at all.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp)
+                    ) {
                         AiDashboardCopilotCard(
                             consultation = uiState.geminiConsultation,
                             isConsulting = uiState.isConsultingAi,
                             onConsultAi = onConsultAi,
                             onClearConsultation = onClearAiConsultation
                         )
+                        Spacer(modifier = Modifier.height(20.dp))
                     }
                 }
             }

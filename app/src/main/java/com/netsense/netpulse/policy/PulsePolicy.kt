@@ -82,6 +82,27 @@ object PulsePolicyEngine {
         )
     }
 
+    /**
+     * Builds a [PolicyDecision] from a [status] that was already computed elsewhere (e.g. from
+     * [com.netsense.netpulse.state.NetworkStateStore]'s authoritative reading, whose status was
+     * derived once via [ProductStatusMapper] at the moment it was measured). Use this instead of
+     * [decide] whenever the caller only has a snapshot/radar generation that may be older than
+     * the one that actually produced [status] - re-deriving status from that mismatched data
+     * here could silently disagree with the authoritative status this decision describes.
+     */
+    fun decideForKnownStatus(
+        status: ProductStatus,
+        healerActions: List<HealerActionItem>
+    ): PolicyDecision {
+        val action = pickLeastDisruptiveAction(status, healerActions)
+        return PolicyDecision(
+            state = status,
+            recommendedAction = action,
+            reason = reasonFor(status, action),
+            predictionAvailable = false
+        )
+    }
+
     private fun pickLeastDisruptiveAction(
         status: ProductStatus,
         actions: List<HealerActionItem>

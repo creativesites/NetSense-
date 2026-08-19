@@ -88,18 +88,28 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                   if (!uiState.appSettings.onboardingCompleted) {
                     OnboardingScreen(
-                        onRequestPermissions = {
-                            val perms = mutableListOf(
+                        isSentinelEnabled = uiState.isSentinelRunning,
+                        onRequestLocationPermission = {
+                            val perms = arrayOf(
                                 Manifest.permission.ACCESS_FINE_LOCATION,
                                 Manifest.permission.ACCESS_COARSE_LOCATION,
                                 Manifest.permission.READ_PHONE_STATE
                             )
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                perms.add(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            onboardingPermissionLauncher.launch(perms.toTypedArray())
+                            onboardingPermissionLauncher.launch(perms)
                         },
-                        onEnableSentinel = { viewModel.toggleSentinelService(this@MainActivity) },
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                onboardingPermissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                            }
+                        },
+                        onEnableSentinel = {
+                            if (!uiState.isSentinelRunning) {
+                                viewModel.toggleSentinelService(this@MainActivity)
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                onboardingPermissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                            }
+                        },
                         onFinish = { viewModel.completeOnboarding() }
                     )
                   } else {

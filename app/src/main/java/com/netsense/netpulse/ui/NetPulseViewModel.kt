@@ -51,6 +51,7 @@ import com.netsense.netpulse.engine.TroubleshootEngine
 import com.netsense.netpulse.engine.TroubleshootFinding
 import com.netsense.netpulse.engine.UsabilityEngine
 import com.netsense.netpulse.model.CellularRfSnapshot
+import com.netsense.netpulse.model.ConnectionPresentationMapper
 import com.netsense.netpulse.model.DiagnosticMode
 import com.netsense.netpulse.model.DiagnosticProbeResult
 import com.netsense.netpulse.model.DualStackResult
@@ -69,6 +70,9 @@ import com.netsense.netpulse.model.WifiRadarSnapshot
 import com.netsense.netpulse.policy.PolicyDecision
 import com.netsense.netpulse.policy.PulsePolicyEngine
 import com.netsense.netpulse.service.NetPulseSentinelService
+import com.netsense.netpulse.state.AuthoritativeNetworkState
+import com.netsense.netpulse.state.NetworkStateStore
+import com.netsense.netpulse.state.StateSource
 import com.netsense.netpulse.telephony.TelephonyObserver
 import com.netsense.netpulse.telephony.TelephonySnapshot
 import kotlinx.coroutines.Dispatchers
@@ -365,6 +369,28 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                     isSynthetic = scenario != SimulatedFaultScenario.NONE
                 )
 
+                val nowTimestamp = System.currentTimeMillis()
+
+                // Single source of truth (Trust pass, Section 1): publish this tick's real
+                // measurement into the process-wide store Sentinel also reads/writes, so Home
+                // and the Sentinel notification can never independently drift apart. A
+                // FaultSimulator scenario is a deliberate on-screen test tool, not a real
+                // reading - it must never leak into the shared authoritative state.
+                if (scenario == SimulatedFaultScenario.NONE) {
+                    NetworkStateStore.publish(
+                        AuthoritativeNetworkState(
+                            scoreResult = score,
+                            classification = finalClassification,
+                            status = policyDecision.state,
+                            snapshot = effectiveSnapshot,
+                            presentation = ConnectionPresentationMapper.map(policyDecision.state, effectiveSnapshot, score),
+                            isRecoveryPending = recoveryResolution.hasPending,
+                            timestampMs = nowTimestamp,
+                            source = StateSource.HOME_LIVE
+                        )
+                    )
+                }
+
                 _uiState.update { current ->
                     val resolved = recoveryResolution.justResolved
                     current.copy(
@@ -380,7 +406,7 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                         prediction = prediction,
                         pulseMindExplanation = explanation,
                         mlTelemetryCount = telemetryCount,
-                        lastCheckedTimestamp = System.currentTimeMillis(),
+                        lastCheckedTimestamp = nowTimestamp,
                         // isHealing tracks ANY pending recovery attempt, whichever screen
                         // triggered it (Home's Fix It button or Advanced's manual healer),
                         // so the Home hero always reflects real PulsePolicy/RecoveryOutcome
@@ -394,6 +420,48 @@ class NetPulseViewModel(application: Application) : AndroidViewModel(application
                                 message = resolved.postDiagnosis
                             )
                         } else current.healingOutcome
+                    )
+                }
+            }
+        }
+
+        // Single source of truth (Trust pass, Section 1): adopt a fresher authoritative
+        // reading published by Sentinel's background probe (NetPulseSentinelService), so Home
+        // never keeps showing a stale score just because nothing changed on
+        // connectivityMonitor/telephonyObserver to re-trigger the live flow above - e.g. the
+        // network has sat idle for several minutes while Sentinel kept probing every 45s.
+        // Guarded so it can never override a fresher local reading, and never fires while a
+        // FaultSimulator scenario is deliberately showing a fabricated on-screen state.
+        viewModelScope.launch {
+            NetworkStateStore.state.collect { authoritative ->
+                if (authoritative == null) return@collect
+                if (authoritative.source != StateSource.SENTINEL_PROBE) return@collect
+                val current = _uiState.value
+                if (current.activeSimulationScenario != SimulatedFaultScenario.NONE) return@collect
+                if (authoritative.timestampMs <= current.lastCheckedTimestamp) return@collect
+
+                // Reuse the exact healer plan + Fix It wiring the live flow uses, generated
+                // from this same authoritative snapshot/score - never re-derive
+                // authoritative.status from current.wifiRadar/cellularRf here, which may be an
+                // older generation of radar data than what produced that status.
+                val healingActions = healerEngine.generateHealingPlan(
+                    authoritative.snapshot,
+                    authoritative.scoreResult,
+                    current.probeResult,
+                    current.pingMatrixResults,
+                    current.dualStackResult
+                )
+                val policyDecision = PulsePolicyEngine.decideForKnownStatus(authoritative.status, healingActions)
+
+                _uiState.update { latest ->
+                    if (latest.activeSimulationScenario != SimulatedFaultScenario.NONE) return@update latest
+                    if (authoritative.timestampMs <= latest.lastCheckedTimestamp) return@update latest
+                    latest.copy(
+                        snapshot = authoritative.snapshot,
+                        scoreResult = authoritative.scoreResult,
+                        healerActions = healingActions,
+                        policyDecision = policyDecision,
+                        lastCheckedTimestamp = authoritative.timestampMs
                     )
                 }
             }

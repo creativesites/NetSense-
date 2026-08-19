@@ -85,10 +85,77 @@ fun buildChartPoints(
         }
 }
 
+/** One real, labeled point on the chart's time axis - never a synthesized/interpolated instant,
+ *  always either an actual measurement's bucket start or the window's "now" boundary. */
+data class ChartAxisTick(val timestampMs: Long, val label: String)
+
+/** "Nice" round intervals to snap axis ticks to, so the axis reads "08:00, 08:15, 08:30" rather
+ *  than arbitrary sample-driven offsets like "08:03, 08:19, 08:41". */
+private val niceTickStepsMs = listOf(
+    5 * 60_000L, 15 * 60_000L, 30 * 60_000L,
+    60 * 60_000L, 2 * 60 * 60_000L, 3 * 60 * 60_000L, 6 * 60 * 60_000L, 12 * 60 * 60_000L,
+    24 * 60 * 60_000L, 2 * 24 * 60 * 60_000L, 7 * 24 * 60 * 60_000L
+)
+
+/**
+ * Builds the chart's dynamic time axis from the actual span of real data - the earliest
+ * measurement currently on screen through "now" - rather than a fixed two-label
+ * first-point/"Now" pair. The tick interval adapts to how much history is actually available
+ * (Section 3 of the Trust pass: "never imply precision the data doesn't have"), and every tick
+ * is a real clock time within that real span - nothing is invented outside
+ * [points.first().bucketStartMs, nowMs].
+ */
+fun buildChartAxisTicks(
+    points: List<ChartPoint>,
+    nowMs: Long = System.currentTimeMillis(),
+    targetTickCount: Int = 4
+): List<ChartAxisTick> {
+    if (points.isEmpty()) return emptyList()
+
+    val domainStart = points.first().bucketStartMs
+    val domainEnd = maxOf(nowMs, points.last().bucketStartMs)
+
+    // A single point (or a zero/negative span, e.g. a fabricated "now" earlier than the data)
+    // has no meaningful interval to tick across - just label the one real instant we have.
+    if (points.size < 2 || domainEnd <= domainStart) {
+        return listOf(ChartAxisTick(domainStart, formatChartTime(domainStart, nowMs)))
+    }
+
+    val span = domainEnd - domainStart
+    val rawStep = span / (targetTickCount - 1).coerceAtLeast(1)
+    val step = niceTickStepsMs.firstOrNull { it >= rawStep } ?: niceTickStepsMs.last()
+
+    val ticks = mutableListOf(domainStart)
+    var t = (domainStart / step + 1) * step
+    while (t < domainEnd) {
+        ticks += t
+        t += step
+    }
+    ticks += domainEnd
+
+    val distinctTicks = ticks.distinct()
+    val thinned = if (distinctTicks.size > targetTickCount) {
+        val stride = (distinctTicks.size - 1).toFloat() / (targetTickCount - 1)
+        (0 until targetTickCount)
+            .map { i -> distinctTicks[(i * stride).toInt().coerceIn(0, distinctTicks.size - 1)] }
+            .distinct()
+    } else {
+        distinctTicks
+    }
+
+    return thinned.map { ts ->
+        // The right edge of the visible window is genuinely "now" - a relative label reads more
+        // naturally there than repeating a clock time also shown moments ago on screen.
+        val label = if (ts == domainEnd && ts == nowMs) "Now" else formatChartTime(ts, nowMs)
+        ChartAxisTick(ts, label)
+    }
+}
+
 @Composable
 fun NetworkProgressionChartCard(logs: List<DiagnosticLogEntity>) {
     var period by remember { mutableStateOf(ChartPeriod.TODAY) }
     val points = remember(logs, period) { buildChartPoints(logs, period) }
+    val axisTicks = remember(points) { buildChartAxisTicks(points) }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -145,19 +212,18 @@ fun NetworkProgressionChartCard(logs: List<DiagnosticLogEntity>) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("network_progression_chart_axis"),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = formatChartTime(points.first().bucketStartMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NetPulseTextTertiary
-                    )
-                    Text(
-                        text = "Now",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NetPulseTextTertiary
-                    )
+                    axisTicks.forEach { tick ->
+                        Text(
+                            text = tick.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NetPulseTextTertiary
+                        )
+                    }
                 }
             }
         }
@@ -247,9 +313,8 @@ private fun ProgressionLineChart(points: List<ChartPoint>, modifier: Modifier = 
     }
 }
 
-private fun formatChartTime(timestampMs: Long): String {
-    val now = System.currentTimeMillis()
-    val sameDay = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(now)) ==
+private fun formatChartTime(timestampMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    val sameDay = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(nowMs)) ==
         SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(timestampMs))
     return if (sameDay) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestampMs))
