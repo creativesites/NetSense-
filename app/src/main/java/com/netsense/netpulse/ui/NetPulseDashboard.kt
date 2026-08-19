@@ -101,6 +101,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.netsense.netpulse.BuildConfig
 import com.netsense.netpulse.ai.mind.PulseMindExplanation
 import com.netsense.netpulse.ai.predictor.PredictorBenchmarkResult
 import com.netsense.netpulse.ai.predictor.PredictorState
@@ -2062,12 +2063,28 @@ fun HealerTabContent(
             )
         }
 
-        // Fault Sandbox Simulator Card (Phase 4 & 8)
-        item {
-            FaultSandboxSimulatorCard(
-                currentScenario = uiState.activeSimulationScenario,
-                onSelectScenario = onSelectScenario
-            )
+        // Fault Sandbox Simulator - fabricates fake network conditions into the live UI state
+        // for QA/demo purposes, which is exactly the "never show a fake reading" line this app
+        // otherwise holds for real users. It has no purpose for someone just trying to fix
+        // their Internet, and risks a real user thinking their connection is actually broken -
+        // so it's a debug-build-only developer tool, never shipped to the Play Store build.
+        if (BuildConfig.DEBUG) {
+            item {
+                Text(
+                    text = "DEVELOPER TOOLS",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = NetPulseTextTertiary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            item {
+                FaultSandboxSimulatorCard(
+                    currentScenario = uiState.activeSimulationScenario,
+                    onSelectScenario = onSelectScenario
+                )
+            }
         }
 
         // Root Cause Findings & Interactive Remediation
