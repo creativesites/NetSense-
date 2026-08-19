@@ -16,8 +16,13 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.location.LocationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -40,6 +45,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Check
@@ -48,11 +54,14 @@ import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Security
@@ -109,6 +118,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.netsense.netpulse.BuildConfig
 import com.netsense.netpulse.R
+import kotlinx.coroutines.delay
 import com.netsense.netpulse.ai.mind.PulseMindExplanation
 import com.netsense.netpulse.ai.predictor.PredictorBenchmarkResult
 import com.netsense.netpulse.ai.predictor.PredictorState
@@ -1639,8 +1649,11 @@ fun DiagnosticsTabContent(
     onRunPingMatrix: () -> Unit,
     onRunDualStackCheck: () -> Unit,
     onRunHopTrace: (String) -> Unit,
-    onSelectCategoryFilter: (TargetCategory?) -> Unit
+    onSelectCategoryFilter: (TargetCategory?) -> Unit,
+    onHealConnection: () -> Unit
 ) {
+    var showTechnicalDetails by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1649,161 +1662,86 @@ fun DiagnosticsTabContent(
     ) {
         item { Spacer(modifier = Modifier.height(6.dp)) }
 
-        // Mode Selector Card
+        // The friendly front door - a plain-language run/result flow, with every existing
+        // technical capability below it (mode selection, ping matrix, dual-stack, hop tracer,
+        // endpoint forensics) preserved but tucked behind "See technical details" rather than
+        // shown by default.
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
-                border = CardDefaults.outlinedCardBorder().copy(
-                    brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Diagnostic Probe Profile",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = NetPulseTextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
+            DiagnosticsHeroCard(
+                uiState = uiState,
+                showTechnicalDetails = showTechnicalDetails,
+                onToggleTechnicalDetails = { showTechnicalDetails = !showTechnicalDetails },
+                onSelectMode = onSelectMode,
+                onRunProbe = onRunProbe,
+                onHealConnection = onHealConnection
+            )
+        }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        DiagnosticMode.values().forEach { mode ->
-                            val isSelected = uiState.selectedMode == mode
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (isSelected) NetPulseAccent else NetPulseSurfaceVariant,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { onSelectMode(mode) }
-                                    .testTag("mode_${mode.name.lowercase()}")
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    // Three equal-weight columns leaves each one too narrow for
-                                    // "Standard Probe"/"Deep Diagnostic" on one line - without a
-                                    // cap they wrap, turning the button into the same tall,
-                                    // narrow vertical bar this whole audit pass is fixing.
-                                    Text(
-                                        text = mode.title,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else NetPulseTextPrimary,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "~${mode.estimatedPayloadKb} KB",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 10.sp,
-                                        color = if (isSelected) Color.White.copy(alpha = 0.8f) else NetPulseTextTertiary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+        item {
+            AnimatedVisibility(
+                visible = showTechnicalDetails,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Multi-Host Ping Matrix Card (Phase 6)
+                    MultiHostPingMatrixCard(
+                        results = uiState.pingMatrixResults,
+                        isProbing = uiState.isMatrixProbing,
+                        selectedCategory = uiState.selectedCategoryFilter,
+                        onSelectCategory = onSelectCategoryFilter,
+                        onRunMatrixProbe = onRunPingMatrix
+                    )
+
+                    // Dual-Stack IPv4 / IPv6 Happy Eyeballs Card (Phase 6)
+                    DualStackDiagnosticCard(
+                        dualStack = uiState.dualStackResult,
+                        isProbing = uiState.isDualStackProbing,
+                        onRunCheck = onRunDualStackCheck
+                    )
+
+                    // Visual Path Hop Tracer Card (Phase 6)
+                    PathHopTracerCard(
+                        hopTrace = uiState.hopTraceResult,
+                        isTracing = uiState.isHopTracing,
+                        onRunTrace = onRunHopTrace
+                    )
+
+                    // Layer 4 & Layer 7 Forensic Endpoints Detail Card
+                    if (uiState.probeResult != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
+                            border = CardDefaults.outlinedCardBorder().copy(
+                                brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "Layer 4 & Layer 7 Multi-Endpoint Telemetry",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NetPulseTextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                EndpointDetailSection(
+                                    title = "Primary Upstream (Google Anycast)",
+                                    detail = uiState.probeResult.primaryEndpoint
+                                )
+
+                                uiState.probeResult.secondaryEndpoint?.let { secondary ->
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    HorizontalDivider(color = NetPulseBorderSubtle)
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    EndpointDetailSection(
+                                        title = "Secondary Upstream (Cloudflare Edge)",
+                                        detail = secondary
                                     )
                                 }
                             }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(
-                        onClick = { onRunProbe(uiState.selectedMode) },
-                        enabled = !uiState.isProbing,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .testTag("run_diagnostics_button"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NetPulseAccent,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        if (uiState.isProbing) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Probing Endpoints...", fontSize = 13.sp)
-                        } else {
-                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Run ${uiState.selectedMode.title}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Multi-Host Ping Matrix Card (Phase 6)
-        item {
-            MultiHostPingMatrixCard(
-                results = uiState.pingMatrixResults,
-                isProbing = uiState.isMatrixProbing,
-                selectedCategory = uiState.selectedCategoryFilter,
-                onSelectCategory = onSelectCategoryFilter,
-                onRunMatrixProbe = onRunPingMatrix
-            )
-        }
-
-        // Dual-Stack IPv4 / IPv6 Happy Eyeballs Card (Phase 6)
-        item {
-            DualStackDiagnosticCard(
-                dualStack = uiState.dualStackResult,
-                isProbing = uiState.isDualStackProbing,
-                onRunCheck = onRunDualStackCheck
-            )
-        }
-
-        // Visual Path Hop Tracer Card (Phase 6)
-        item {
-            PathHopTracerCard(
-                hopTrace = uiState.hopTraceResult,
-                isTracing = uiState.isHopTracing,
-                onRunTrace = onRunHopTrace
-            )
-        }
-
-        // Layer 4 & Layer 7 Forensic Endpoints Detail Card
-        if (uiState.probeResult != null) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
-                    border = CardDefaults.outlinedCardBorder().copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Layer 4 & Layer 7 Multi-Endpoint Telemetry",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = NetPulseTextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        EndpointDetailSection(
-                            title = "Primary Upstream (Google Anycast)",
-                            detail = uiState.probeResult.primaryEndpoint
-                        )
-
-                        uiState.probeResult.secondaryEndpoint?.let { secondary ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            HorizontalDivider(color = NetPulseBorderSubtle)
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            EndpointDetailSection(
-                                title = "Secondary Upstream (Cloudflare Edge)",
-                                detail = secondary
-                            )
                         }
                     }
                 }
@@ -1811,6 +1749,312 @@ fun DiagnosticsTabContent(
         }
 
         item { Spacer(modifier = Modifier.height(16.dp)) }
+    }
+}
+
+/**
+ * The plain-language front door for Diagnostics: idle (nothing run yet) -> running (animated,
+ * interactive checklist while the real probe executes) -> result (a friendly headline built
+ * from the real UsabilityScoreResult, a Heal Connection CTA when PulsePolicy actually has one,
+ * and a toggle that reveals every existing technical card below rather than removing them).
+ * Never fabricates progress or an outcome - the "steps" while running describe the probe
+ * process in general terms, not specific interim verdicts the app doesn't actually have yet.
+ */
+@Composable
+private fun DiagnosticsHeroCard(
+    uiState: DashboardUiState,
+    showTechnicalDetails: Boolean,
+    onToggleTechnicalDetails: () -> Unit,
+    onSelectMode: (DiagnosticMode) -> Unit,
+    onRunProbe: (DiagnosticMode) -> Unit,
+    onHealConnection: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("diagnostics_hero_card"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = NetPulseSurface),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = androidx.compose.ui.graphics.SolidColor(NetPulseBorder)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            when {
+                uiState.isProbing -> DiagnosticsRunningState()
+                uiState.probeResult != null -> DiagnosticsResultState(
+                    uiState = uiState,
+                    onHealConnection = onHealConnection,
+                    onRunAgain = { onRunProbe(uiState.selectedMode) }
+                )
+                else -> DiagnosticsIdleState(
+                    selectedMode = uiState.selectedMode,
+                    onSelectMode = onSelectMode,
+                    onRunProbe = onRunProbe
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(color = NetPulseBorderSubtle)
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleTechnicalDetails() }
+                    .testTag("toggle_technical_details"),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (showTechnicalDetails) "Hide technical details" else "See technical details",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NetPulseAccent
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = if (showTechnicalDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = NetPulseAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsIdleState(
+    selectedMode: DiagnosticMode,
+    onSelectMode: (DiagnosticMode) -> Unit,
+    onRunProbe: (DiagnosticMode) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(CircleShape)
+            .background(NetPulseAccentContainer),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.NetworkCheck,
+            contentDescription = null,
+            tint = NetPulseOnAccentContainer,
+            modifier = Modifier.size(34.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        text = "Check your connection",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+        color = NetPulseTextPrimary,
+        textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = "A quick, real check of DNS, connection speed, and Internet access.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = NetPulseTextSecondary,
+        textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(18.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DiagnosticMode.values().forEach { mode ->
+            val isSelected = selectedMode == mode
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (isSelected) NetPulseAccent else NetPulseSurfaceVariant,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelectMode(mode) }
+                    .testTag("mode_${mode.name.lowercase()}")
+            ) {
+                Text(
+                    text = mode.title,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isSelected) Color.White else NetPulseTextPrimary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp, horizontal = 4.dp)
+                )
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Button(
+        onClick = { onRunProbe(selectedMode) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("run_diagnostics_button"),
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = NetPulseAccent, contentColor = Color.White)
+    ) {
+        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Run Diagnostic", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun DiagnosticsRunningState() {
+    var elapsedMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val startedAt = System.currentTimeMillis()
+        while (true) {
+            elapsedMs = System.currentTimeMillis() - startedAt
+            delay(100)
+        }
+    }
+    val stages = listOf("Checking DNS resolution", "Testing connection speed", "Verifying Internet access")
+    val activeStage = (elapsedMs / 700L).toInt().coerceAtMost(stages.size - 1)
+
+    Box(
+        modifier = Modifier.size(72.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.fillMaxSize(),
+            color = NetPulseAccent,
+            trackColor = NetPulseSurfaceVariant,
+            strokeWidth = 4.dp
+        )
+        Icon(
+            imageVector = Icons.Default.NetworkCheck,
+            contentDescription = null,
+            tint = NetPulseAccent,
+            modifier = Modifier.size(28.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        text = "Checking your connection...",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+        color = NetPulseTextPrimary,
+        textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(14.dp))
+
+    Column(
+        horizontalAlignment = Alignment.Start,
+        modifier = Modifier.testTag("diagnostics_running_checklist")
+    ) {
+        stages.forEachIndexed { index, stage ->
+            val isDone = index < activeStage
+            val isActive = index == activeStage
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                if (isDone) {
+                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = StatusOptimal, modifier = Modifier.size(16.dp))
+                } else if (isActive) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = NetPulseAccent)
+                } else {
+                    Box(modifier = Modifier.size(14.dp).clip(CircleShape).background(NetPulseSurfaceVariant))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = stage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isDone || isActive) NetPulseTextPrimary else NetPulseTextTertiary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsResultState(
+    uiState: DashboardUiState,
+    onHealConnection: () -> Unit,
+    onRunAgain: () -> Unit
+) {
+    val rating = uiState.scoreResult.rating
+    val (headline, visual, accentColor) = when (rating) {
+        UsabilityRating.OPTIMAL, UsabilityRating.GOOD -> Triple("Your connection looks great", Icons.Default.CheckCircle, StatusOptimal)
+        UsabilityRating.DEGRADED -> Triple("Your connection is a bit shaky", Icons.Default.Warning, StatusDegraded)
+        UsabilityRating.POOR, UsabilityRating.UNUSABLE -> Triple("We found a problem", Icons.Default.PriorityHigh, StatusUnusable)
+    }
+
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(CircleShape)
+            .background(accentColor.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(imageVector = visual, contentDescription = null, tint = accentColor, modifier = Modifier.size(34.dp))
+    }
+    Spacer(modifier = Modifier.height(16.dp))
+    Text(
+        text = headline,
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+        color = NetPulseTextPrimary,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.testTag("diagnostics_result_headline")
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = uiState.scoreResult.primaryDiagnosis,
+        style = MaterialTheme.typography.bodyMedium,
+        color = NetPulseTextSecondary,
+        textAlign = TextAlign.Center
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "${uiState.scoreResult.score}/100 · ${rating.label}",
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = accentColor
+    )
+    Spacer(modifier = Modifier.height(18.dp))
+
+    val recommendedAction = uiState.policyDecision.recommendedAction
+    if (recommendedAction != null) {
+        Button(
+            onClick = onHealConnection,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("diagnostics_heal_connection_button"),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = NetPulseAccent, contentColor = Color.White)
+        ) {
+            Icon(imageVector = Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Heal Connection", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+    }
+
+    OutlinedButton(
+        onClick = onRunAgain,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .testTag("diagnostics_run_again_button"),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("Run Again", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

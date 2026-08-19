@@ -141,7 +141,10 @@ fun AdvancedScreen(
                         onRunPingMatrix = onRunPingMatrix,
                         onRunDualStackCheck = onRunDualStackCheck,
                         onRunHopTrace = onRunHopTrace,
-                        onSelectCategoryFilter = onSelectCategoryFilter
+                        onSelectCategoryFilter = onSelectCategoryFilter,
+                        onHealConnection = {
+                            uiState.policyDecision.recommendedAction?.let { onExecuteHealerAction(it) }
+                        }
                     )
                 }
                 DashboardTab.RADAR -> {
